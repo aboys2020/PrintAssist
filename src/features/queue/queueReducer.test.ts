@@ -107,7 +107,23 @@ describe('queueReducer', () => {
     });
     expect(state.items.map((item) => item.fileName)).toEqual(['1.pdf', '2.pdf', '3.pdf']);
   });
+
+  it('updates pageCount with set_item_page_count', () => {
+    let state = queueReducer(createEmptyQueueState(), {
+      type: 'append_files',
+      paths: ['C:\\\\docs\\\\report.pdf'],
+    });
+    expect(state.items[0].pageCount).toBeNull();
+
+    state = queueReducer(state, {
+      type: 'set_item_page_count',
+      id: state.items[0].id,
+      pageCount: 18,
+    });
+    expect(state.items[0].pageCount).toBe(18);
+  });
 });
+
 
 describe('calculateBatchMetrics', () => {
   it('correctly calculates total pages, sheets, and paper savings with duplex', () => {

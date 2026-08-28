@@ -16,10 +16,12 @@ export type QueueAction =
   | { type: 'update_override'; id: string; override: FileSettingsOverride }
   | { type: 'batch_update_override'; ids: string[]; overridePatch: Partial<FileSettingsOverride> }
   | { type: 'set_item_status'; id: string; status: QueueItem['status']; errorMessage?: string }
+  | { type: 'set_item_page_count'; id: string; pageCount: number }
   | { type: 'begin_print' }
   | { type: 'finish_print'; summary: PrintJobSummary }
   | { type: 'retry_failed' }
   | { type: 'move_item'; id: string; direction: 'up' | 'down' };
+
 
 
 const SUPPORTED_EXTENSIONS: Record<string, SupportedDocumentKind> = {
@@ -73,7 +75,7 @@ function createQueueItem(filePath: string): QueueItem {
     path: filePath,
     fileName: extractFileName(filePath),
     kind,
-    pageCount: null,
+    pageCount: kind === 'image' ? 1 : null,
     status: kind === 'unknown' ? 'failed' : 'ready',
     override: {},
     errorMessage: kind === 'unknown' ? '不支持的文件类型' : undefined,
@@ -155,8 +157,21 @@ export function queueReducer(state: QueueState, action: QueueAction): QueueState
       };
     }
 
+    case 'set_item_page_count':
+      return {
+        ...state,
+        items: state.items.map((item) =>
+          item.id === action.id
+            ? {
+                ...item,
+                pageCount: action.pageCount,
+              }
+            : item,
+        ),
+      };
 
     case 'set_item_status':
+
       return {
         ...state,
         items: state.items.map((item) =>

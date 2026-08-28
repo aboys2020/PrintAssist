@@ -1,7 +1,6 @@
 import {
-  ArrowDown,
-  ArrowUp,
   BookOpen,
+  ChevronDown,
   Copy,
   FileCode2,
   FileSpreadsheet,
@@ -17,7 +16,8 @@ import {
   Trash,
   Trash2,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { QueueItem } from '../../domain/queueTypes';
 import { describePageRange } from '../../domain/pageRange';
 import {
@@ -39,12 +39,12 @@ interface PrintQueueProps {
   onOpenSettings: (id: string) => void;
   onUpdateOverride: (id: string, override: FileSettingsOverride) => void;
   onBatchUpdateOverride: (ids: string[], patch: Partial<FileSettingsOverride>) => void;
-  onMoveItem: (id: string, direction: 'up' | 'down') => void;
   onClearQueue: () => void;
   onStartPrint: () => void;
   printDisabled?: boolean;
   onPickFiles?: () => void;
 }
+
 
 function getKindInfo(kind: QueueItem['kind']) {
   switch (kind) {
@@ -115,13 +115,16 @@ export function PrintQueue({
   onOpenSettings,
   onUpdateOverride,
   onBatchUpdateOverride,
-  onMoveItem,
   onClearQueue,
   onStartPrint,
   printDisabled = false,
   onPickFiles,
 }: PrintQueueProps) {
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const [batchCopies, setBatchCopies] = useState(1);
+  const batchMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Clean up selected IDs that don't exist anymore
   const validSelectedIds = useMemo(() => {
@@ -141,6 +144,43 @@ export function PrintQueue({
 
   const isAllSelected = items.length > 0 && validSelectedIds.size === items.length;
   const hasSelection = validSelectedIds.size > 0;
+
+  // Determine target IDs for batch operations: if items are checked, use them; otherwise apply to whole queue
+  const targetIds = useMemo(() => {
+    if (validSelectedIds.size > 0) {
+      return Array.from(validSelectedIds);
+    }
+    return items.map((item) => item.id);
+  }, [validSelectedIds, items]);
+
+  const targetLabel = validSelectedIds.size > 0 ? `已选 ${validSelectedIds.size} 项` : `全部 ${items.length} 项`;
+
+  // Close floating batch menu on outside click or escape
+  useEffect(() => {
+    if (!batchMenuOpen) return;
+
+    const handlePointerDownOutside = (event: MouseEvent) => {
+      if (
+        batchMenuContainerRef.current &&
+        !batchMenuContainerRef.current.contains(event.target as Node)
+      ) {
+        setBatchMenuOpen(false);
+      }
+    };
+
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setBatchMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDownOutside);
+    document.addEventListener('keydown', handleEscapeKey);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDownOutside);
+      document.removeEventListener('keydown', handleEscapeKey);
+    };
+  }, [batchMenuOpen]);
 
   const handleToggleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -197,66 +237,159 @@ export function PrintQueue({
             <span className="selection-count-text">已选 {validSelectedIds.size} 项</span>
           </div>
 
-          <div className="batch-actions-group">
+          <div className="batch-actions-group" ref={batchMenuContainerRef}>
             <button
               type="button"
-              className="btn-batch"
-              disabled={!hasSelection || isPrinting || !duplexEnabled}
-              onClick={() =>
-                onBatchUpdateOverride(Array.from(validSelectedIds), {
-                  sidesMode: 'duplex',
-                  flipMode: 'longEdge',
-                })
-              }
+              className={`btn-batch-trigger ${batchMenuOpen ? 'active' : ''}`}
+              disabled={items.length === 0 || isPrinting}
+              onClick={() => setBatchMenuOpen((prev) => !prev)}
             >
-              <Copy size={13} /> 批量双面
+              <SlidersHorizontal size={13} />
+              <span>
+                批量设置 {validSelectedIds.size > 0 ? `(${validSelectedIds.size})` : ''}
+              </span>
+              <ChevronDown size={13} className={`caret-down ${batchMenuOpen ? 'open' : ''}`} />
             </button>
-            <button
-              type="button"
-              className="btn-batch"
-              disabled={!hasSelection || isPrinting}
-              onClick={() =>
-                onBatchUpdateOverride(Array.from(validSelectedIds), {
-                  sidesMode: 'simplex',
-                })
-              }
-            >
-              批量单面
-            </button>
-            <button
-              type="button"
-              className="btn-batch"
-              disabled={!hasSelection || isPrinting}
-              onClick={() =>
-                onBatchUpdateOverride(Array.from(validSelectedIds), {
-                  colorMode: 'monochrome',
-                })
-              }
-            >
-              批量黑白
-            </button>
-            <button
-              type="button"
-              className="btn-batch"
-              disabled={!hasSelection || isPrinting || !colorEnabled}
-              onClick={() =>
-                onBatchUpdateOverride(Array.from(validSelectedIds), {
-                  colorMode: 'color',
-                })
-              }
-            >
-              <Palette size={13} /> 批量彩色
-            </button>
+
+            {/* 悬浮弹窗面板 */}
+            {batchMenuOpen && (
+              <div className="batch-settings-popover">
+                <div className="batch-pop-header">
+                  <span>批量设置参数 ({targetLabel})</span>
+                  {validSelectedIds.size === 0 && (
+                    <span className="batch-pop-hint">未勾选时默认作用于全部文件</span>
+                  )}
+                </div>
+
+                {/* 色彩设置 */}
+                <div className="batch-pop-section">
+                  <div className="batch-pop-label">色彩模式</div>
+                  <div className="batch-pop-btns">
+                    <button
+                      type="button"
+                      className="btn-batch-pop"
+                      onClick={() => {
+                        onBatchUpdateOverride(targetIds, { colorMode: 'monochrome' });
+                      }}
+                    >
+                      ⚫ 设为黑白
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-batch-pop"
+                      disabled={!colorEnabled}
+                      onClick={() => {
+                        onBatchUpdateOverride(targetIds, { colorMode: 'color' });
+                      }}
+                    >
+                      🎨 设为彩色
+                    </button>
+                  </div>
+                </div>
+
+                {/* 单双面设置 */}
+                <div className="batch-pop-section">
+                  <div className="batch-pop-label">单双面与装订</div>
+                  <div className="batch-pop-btns">
+                    <button
+                      type="button"
+                      className="btn-batch-pop"
+                      onClick={() => {
+                        onBatchUpdateOverride(targetIds, { sidesMode: 'simplex' });
+                      }}
+                    >
+                      📃 单面
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-batch-pop"
+                      disabled={!duplexEnabled}
+                      onClick={() => {
+                        onBatchUpdateOverride(targetIds, {
+                          sidesMode: 'duplex',
+                          flipMode: 'longEdge',
+                        });
+                      }}
+                    >
+                      📄 双面长边
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-batch-pop"
+                      disabled={!duplexEnabled}
+                      onClick={() => {
+                        onBatchUpdateOverride(targetIds, {
+                          sidesMode: 'duplex',
+                          flipMode: 'shortEdge',
+                        });
+                      }}
+                    >
+                      📑 双面短边
+                    </button>
+                  </div>
+                </div>
+
+                {/* 批量份数设置 */}
+                <div className="batch-pop-section">
+                  <div className="batch-pop-label">打印份数</div>
+                  <div className="batch-copies-row">
+                    <div className="stepper-input" style={{ width: '100px' }}>
+                      <button
+                        type="button"
+                        className="stepper-btn"
+                        onClick={() => setBatchCopies((c) => Math.max(1, c - 1))}
+                      >
+                        -
+                      </button>
+                      <div className="stepper-val">{batchCopies} 份</div>
+                      <button
+                        type="button"
+                        className="stepper-btn"
+                        onClick={() => setBatchCopies((c) => Math.min(99, c + 1))}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-batch-pop active-btn"
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        onBatchUpdateOverride(targetIds, { copies: batchCopies });
+                      }}
+                    >
+                      应用份数
+                    </button>
+                  </div>
+                </div>
+
+                <div className="batch-pop-divider" />
+
+                <button
+                  type="button"
+                  className="btn-batch-pop btn-batch-pop-danger"
+                  onClick={() => {
+                    onBatchRemove(targetIds);
+                    setSelectedIds(new Set());
+                    setBatchMenuOpen(false);
+                  }}
+                >
+                  <Trash2 size={13} /> 批量移除 ({targetLabel})
+                </button>
+              </div>
+            )}
+
             <button
               type="button"
               className="btn-batch btn-batch-danger"
-              disabled={!hasSelection || isPrinting}
+              disabled={items.length === 0 || isPrinting}
               onClick={() => {
-                onBatchRemove(Array.from(validSelectedIds));
+                onBatchRemove(targetIds);
                 setSelectedIds(new Set());
               }}
+              title="批量删除"
             >
-              <Trash2 size={13} /> 批量删除
+              <Trash2 size={13} />
             </button>
           </div>
         </div>
@@ -272,17 +405,13 @@ export function PrintQueue({
             <BookOpen size={14} />
             <span>{metrics.totalPages} 页内容</span>
           </div>
-          <span className="eco-stat-divider">•</span>
-          <div className="eco-stat">
-            <span>预计 {metrics.totalSheets} 张纸 (A4)</span>
-          </div>
           {metrics.savedSheets > 0 && (
             <>
               <span className="eco-stat-divider">•</span>
               <div className="eco-stat eco-stat-highlight">
                 <Leaf size={14} />
                 <span>
-                  🌱 节省 {metrics.savedSheets} 张纸 ({metrics.savingPercentage}%)
+                  🌱 双面节约 {metrics.savedSheets} 页 ({metrics.savingPercentage}%)
                 </span>
               </div>
             </>
@@ -312,7 +441,7 @@ export function PrintQueue({
             ) : (
               <>
                 <Play size={16} fill="currentColor" />
-                <span>开始打印 ({metrics.totalSheets} 张)</span>
+                <span>开始打印</span>
               </>
             )}
           </button>
@@ -334,7 +463,7 @@ export function PrintQueue({
               <button
                 type="button"
                 className="btn-secondary"
-                style={{ marginTop: '12px' }}
+                style={{ marginTop: '12px', padding: '0 12px' }}
                 onClick={onPickFiles}
               >
                 选择文件追加
@@ -344,7 +473,6 @@ export function PrintQueue({
         ) : (
           <div className="queue-table-card">
             <div className="table-header-row">
-              <span>排序</span>
               <span>选</span>
               <span>文件名称与路径</span>
               <span>页数</span>
@@ -354,12 +482,13 @@ export function PrintQueue({
             </div>
 
             <div className="queue-list">
-              {items.map((item, index) => {
+              {items.map((item) => {
                 const isSelected = validSelectedIds.has(item.id);
                 const resolved = mergePrintSettings(globalSettings, item.override);
                 const isColorOverridden = item.override.colorMode !== undefined;
                 const isSidesOverridden = item.override.sidesMode !== undefined;
                 const isRangeOverridden = item.override.pageRange !== undefined;
+                const isCopiesOverridden = item.override.copies !== undefined;
                 const kindInfo = getKindInfo(item.kind);
 
                 return (
@@ -369,27 +498,6 @@ export function PrintQueue({
                       item.status === 'printing' ? 'printing' : ''
                     } ${item.status === 'failed' ? 'failed' : ''}`}
                   >
-                    <div className="row-order-cell">
-                      <button
-                        type="button"
-                        className="btn-order-move"
-                        disabled={isPrinting || index === 0}
-                        onClick={() => onMoveItem(item.id, 'up')}
-                        title="向上移动"
-                      >
-                        <ArrowUp size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-order-move"
-                        disabled={isPrinting || index === items.length - 1}
-                        onClick={() => onMoveItem(item.id, 'down')}
-                        title="向下移动"
-                      >
-                        <ArrowDown size={12} />
-                      </button>
-                    </div>
-
                     <div className="row-check-cell">
                       <input
                         type="checkbox"
@@ -399,6 +507,7 @@ export function PrintQueue({
                         onChange={(e) => handleToggleItem(item.id, e.target.checked)}
                       />
                     </div>
+
 
                     <div className="file-info-cell">
                       <div className={`file-type-icon ${kindInfo.className}`}>
@@ -439,6 +548,15 @@ export function PrintQueue({
                             ? `📄 双面(${resolved.flipMode === 'shortEdge' ? '短边' : '长边'})`
                             : '📃 单面'}
                         </span>
+                        {isCopiesOverridden && (
+                          <span
+                            className="quick-chip active-override"
+                            onClick={() => onOpenSettings(item.id)}
+                            title="份数覆盖"
+                          >
+                            {resolved.copies} 份
+                          </span>
+                        )}
                         <span
                           className={`quick-chip ${isRangeOverridden ? 'active-override' : ''}`}
                           onClick={() => onOpenSettings(item.id)}
@@ -448,7 +566,7 @@ export function PrintQueue({
                         </span>
                       </div>
                       <span className="scope-note">
-                        {isColorOverridden || isSidesOverridden || isRangeOverridden
+                        {isColorOverridden || isSidesOverridden || isRangeOverridden || isCopiesOverridden
                           ? '⚡ 含有独立覆盖'
                           : '· 继承公共设置'}
                       </span>

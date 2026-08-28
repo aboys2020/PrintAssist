@@ -23,10 +23,12 @@ import {
   listSystemPrinters,
   pickFiles,
   pickFolderFiles,
+  probeDocumentInfo,
   runPrintBatch,
   subscribeIncomingFiles,
   subscribeNativeDragDrop,
 } from './api/nativeBridge';
+
 import {
   createDefaultGlobalSettings,
   evaluateSettingAvailability,
@@ -147,11 +149,32 @@ export function App() {
     });
   }, []);
 
+  useEffect(() => {
+    const unprobed = queueState.items.filter(
+      (item) => item.pageCount === null && item.kind !== 'unknown',
+    );
+    if (unprobed.length === 0) return;
+
+    for (const item of unprobed) {
+      void (async () => {
+        try {
+          const { pageCount } = await probeDocumentInfo(item.path);
+          if (pageCount !== null && pageCount > 0) {
+            dispatch({ type: 'set_item_page_count', id: item.id, pageCount });
+          }
+        } catch {
+          // ignore
+        }
+      })();
+    }
+  }, [queueState.items]);
+
   const appendPaths = (paths: string[]) => {
     if (paths.length === 0) return;
     dispatch({ type: 'append_files', paths });
     message.success(`已追加 ${paths.length} 个文件`);
   };
+
 
   const handlePickFiles = async () => {
     try {
@@ -539,13 +562,11 @@ export function App() {
                 dispatch({ type: 'batch_update_override', ids, overridePatch });
                 message.success(`已批量更新 ${ids.length} 个文件的打印设置`);
               }}
-              onMoveItem={(id, direction) =>
-                dispatch({ type: 'move_item', id, direction })
-              }
               onClearQueue={() => dispatch({ type: 'clear_queue' })}
               onStartPrint={() => void executePrint(false)}
               onPickFiles={() => void handlePickFiles()}
             />
+
           </main>
         </div>
       </div>
@@ -573,9 +594,10 @@ export function App() {
             确定
           </Button>
         }
-        width={420}
+        width={480}
         destroyOnClose
       >
+
         <ProxySettingsPanel settings={proxySettings} onChange={setProxySettings} />
       </Modal>
 

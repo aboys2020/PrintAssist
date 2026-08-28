@@ -436,7 +436,64 @@ pub async fn open_release_page() -> Result<(), String> {
         .map_err(|error| format!("打开下载页失败：{error}"))
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DocumentProbeResult {
+    pub page_count: Option<u32>,
+}
+
+#[tauri::command]
+pub async fn probe_document_info(path: String) -> Result<DocumentProbeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = Path::new(&path);
+        if !p.exists() {
+            return Ok(DocumentProbeResult { page_count: None });
+        }
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // 1. PDF page count via lopdf
+        if ext == "pdf" {
+            if let Ok(doc) = lopdf::Document::load(p) {
+                let pages = doc.get_pages().len() as u32;
+                return Ok(DocumentProbeResult {
+                    page_count: Some(pages.max(1)),
+                });
+            }
+        }
+
+        // 2. Images are single page
+        let image_exts = [
+            "png", "jpg", "jpeg", "jpe", "jfif", "bmp", "dib", "tif", "tiff", "gif", "webp",
+            "ico", "heic", "heif", "avif", "emf", "wmf",
+        ];
+        if image_exts.contains(&ext.as_str()) {
+            return Ok(DocumentProbeResult {
+                page_count: Some(1),
+            });
+        }
+
+        // 3. Plain text files
+        if matches!(ext.as_str(), "txt" | "log" | "md") {
+            if let Ok(content) = std::fs::read_to_string(p) {
+                let line_count = content.lines().count();
+                let pages = ((line_count as u32 + 59) / 60).max(1);
+                return Ok(DocumentProbeResult {
+                    page_count: Some(pages),
+                });
+            }
+        }
+
+        Ok(DocumentProbeResult { page_count: None })
+    })
+    .await
+    .map_err(|error| format!("probe task failed: {error}"))?
+}
+
 #[tauri::command]
 pub fn validate_supported_path(path: String) -> bool {
     is_supported_file(PathBuf::from(path).as_path())
 }
+

@@ -12,12 +12,12 @@ import {
   Typography,
   message,
 } from 'antd';
-
 import {
   BookOpen,
   Check,
   CheckCheck,
   FileText,
+  HelpCircle,
   RotateCw,
   Sliders,
 } from 'lucide-react';
@@ -78,13 +78,15 @@ export function FileSettingsDrawer({
   const [sidesMode, setSidesMode] = useState<SidesMode>('simplex');
   const [flipMode, setFlipMode] = useState<FlipMode>('longEdge');
   const [copies, setCopies] = useState(1);
-  const [pageExpression, setPageExpression] = useState('1,3,5-8');
-  const [rangeQuickMode, setRangeQuickMode] = useState<'all' | 'odd' | 'even' | 'custom'>('custom');
+  const [pageExpression, setPageExpression] = useState('');
+  const [rangeQuickMode, setRangeQuickMode] = useState<'all' | 'odd' | 'even' | 'custom'>('all');
+
+  const isPageCountKnown = Boolean(item?.pageCount && item.pageCount > 0);
+  const actualPages = isPageCountKnown ? item!.pageCount! : 1;
 
   useEffect(() => {
-    if (!item) {
-      return;
-    }
+    if (!item) return;
+
     const merged = mergePrintSettings(globalSettings, item.override);
     setUseCustomColor(item.override.colorMode !== undefined);
     setUseCustomSides(
@@ -97,24 +99,34 @@ export function FileSettingsDrawer({
     setFlipMode(merged.flipMode);
     setCopies(merged.copies);
 
-    const initialExpr =
-      item.override.pageRange?.expression ||
-      (merged.pageRange.mode === 'custom' ? merged.pageRange.expression : '1, 3, 5-8');
-    setPageExpression(initialExpr);
-    setRangeQuickMode(item.override.pageRange?.mode === 'custom' ? 'custom' : 'all');
+    const hasCustomRange = item.override.pageRange?.mode === 'custom';
+    if (hasCustomRange) {
+      setPageExpression(item.override.pageRange?.expression || '');
+      setRangeQuickMode('custom');
+    } else {
+      // Default to full range representation based on actual page count
+      if (item.pageCount && item.pageCount > 1) {
+        setPageExpression(`1-${item.pageCount}`);
+      } else {
+        setPageExpression('1');
+      }
+      setRangeQuickMode('all');
+    }
   }, [item, globalSettings]);
 
-  const maxPages = useMemo(() => {
-    return item?.pageCount && item.pageCount > 0 ? item.pageCount : 12;
-  }, [item?.pageCount]);
-
   const selectedPagesList = useMemo<number[]>(() => {
-    if (!useCustomPages) {
-      return Array.from({ length: maxPages }, (_, i) => i + 1);
+    if (!isPageCountKnown) {
+      if (!useCustomPages || !pageExpression.trim()) return [];
+      const parsed = parsePageRangeExpression(pageExpression);
+      return parsed.ok ? parsed.pages : [];
     }
-    const parsed = parsePageRangeExpression(pageExpression, maxPages);
+
+    if (!useCustomPages) {
+      return Array.from({ length: actualPages }, (_, i) => i + 1);
+    }
+    const parsed = parsePageRangeExpression(pageExpression, actualPages);
     return parsed.ok ? parsed.pages : [];
-  }, [useCustomPages, pageExpression, maxPages]);
+  }, [useCustomPages, pageExpression, isPageCountKnown, actualPages]);
 
   const handleTogglePageBlock = (pageNumber: number) => {
     setUseCustomPages(true);
@@ -133,13 +145,14 @@ export function FileSettingsDrawer({
     setRangeQuickMode(val);
     if (val === 'all') {
       setUseCustomPages(false);
+      setPageExpression(actualPages > 1 ? `1-${actualPages}` : '1');
     } else if (val === 'odd') {
       setUseCustomPages(true);
-      const odds = Array.from({ length: maxPages }, (_, i) => i + 1).filter((p) => p % 2 === 1);
+      const odds = Array.from({ length: actualPages }, (_, i) => i + 1).filter((p) => p % 2 === 1);
       setPageExpression(formatPageNumbersToRanges(odds));
     } else if (val === 'even') {
       setUseCustomPages(true);
-      const evens = Array.from({ length: maxPages }, (_, i) => i + 1).filter((p) => p % 2 === 0);
+      const evens = Array.from({ length: actualPages }, (_, i) => i + 1).filter((p) => p % 2 === 0);
       setPageExpression(formatPageNumbersToRanges(evens));
     } else if (val === 'custom') {
       setUseCustomPages(true);
@@ -147,9 +160,7 @@ export function FileSettingsDrawer({
   };
 
   const handleSave = () => {
-    if (!item) {
-      return;
-    }
+    if (!item) return;
 
     const nextOverride: FileSettingsOverride = {};
 
@@ -213,7 +224,9 @@ export function FileSettingsDrawer({
           </div>
           <div className="drawer-meta-badges">
             <Tag color="blue">{item.kind.toUpperCase()}</Tag>
-            <Tag color="cyan">{item.pageCount ? `${item.pageCount} 页` : '页数待定'}</Tag>
+            <Tag color="cyan">
+              {item.pageCount ? `共 ${item.pageCount} 页` : '页数自动探测/未指定'}
+            </Tag>
           </div>
         </div>
       )}
@@ -250,107 +263,130 @@ export function FileSettingsDrawer({
           <Input
             disabled={!useCustomPages}
             value={pageExpression}
-            placeholder="例如 1, 3, 5-8"
+            placeholder={
+              isPageCountKnown
+                ? `例如 1, 3, 5-${actualPages}`
+                : '例如 1, 3, 5-8'
+            }
             onChange={(e) => {
               setPageExpression(e.target.value);
               setRangeQuickMode('custom');
             }}
           />
-          <div className="range-summary-text">
-            已勾选 {selectedPagesList.length} / {maxPages} 页
-          </div>
+          {isPageCountKnown && (
+            <div className="range-summary-text">
+              已选 {selectedPagesList.length} / {actualPages} 页
+            </div>
+          )}
         </div>
 
         {/* 可视化页面缩略方块网格 */}
-        <div className="visual-page-grid-container">
-          <div className="grid-label">点击缩略方块勾选/取消对应页码：</div>
-          <div className="visual-page-grid">
-            {Array.from({ length: Math.min(maxPages, 48) }, (_, i) => i + 1).map((p) => {
-              const isSelected = selectedPagesList.includes(p);
-              return (
-                <div
-                  key={p}
-                  className={`page-grid-block ${isSelected ? 'selected' : ''}`}
-                  onClick={() => handleTogglePageBlock(p)}
-                  title={`第 ${p} 页 (点击切换)`}
-                >
-                  <span className="page-num">{p}</span>
-                  {isSelected && <CheckCheck size={10} className="check-icon" />}
-                </div>
-              );
-            })}
+        {isPageCountKnown ? (
+          <div className="visual-page-grid-container">
+            <div className="grid-label">
+              实际页数 ({actualPages} 页) · 点击方块直观勾选/取消：
+            </div>
+            <div className="visual-page-grid">
+              {Array.from({ length: Math.min(actualPages, 60) }, (_, i) => i + 1).map((p) => {
+                const isSelected = selectedPagesList.includes(p);
+                return (
+                  <div
+                    key={p}
+                    className={`page-grid-block ${isSelected ? 'selected' : ''}`}
+                    onClick={() => handleTogglePageBlock(p)}
+                    title={`点击切换第 ${p} 页`}
+                  >
+                    {isSelected && <CheckCheck size={11} className="check-icon" />}
+                    <span className="page-num">{p}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {actualPages > 60 && (
+              <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                页面较多，前 60 页已展示在网格中，超出部分可通过上方输入框指定。
+              </div>
+            )}
           </div>
-        </div>
+        ) : (
+          <div style={{ fontSize: '11px', color: '#64748b', background: '#f8fafc', padding: '8px 10px', borderRadius: '6px' }}>
+            提示：当前文件类型未直接探测到物理总页数，您可在上方输入框直接填写需打印的页码区间（如 <code>1-5</code> 或 <code>1,3,5</code>）。
+          </div>
+        )}
       </div>
 
-      {/* 颜色模式 */}
+      {/* 色彩模式 */}
       <div className="drawer-section-box">
         <div className="drawer-field-head">
           <div className="field-title-group">
-            <Typography.Text strong>色彩模式覆盖</Typography.Text>
+            <Typography.Text strong>色彩模式</Typography.Text>
           </div>
           <Switch checked={useCustomColor} onChange={setUseCustomColor} />
         </div>
         <Radio.Group
-          disabled={!useCustomColor || !colorEnabled}
+          disabled={!useCustomColor}
           value={colorMode}
-          onChange={(event) => setColorMode(event.target.value as ColorMode)}
-          buttonStyle="solid"
+          onChange={(e) => setColorMode(e.target.value)}
         >
-          <Radio.Button value="monochrome">⚫ 黑白模式</Radio.Button>
-          <Radio.Button value="color">🎨 全彩模式</Radio.Button>
+          <Radio value="monochrome">黑白</Radio>
+          <Radio value="color" disabled={!colorEnabled}>
+            彩色 {!colorEnabled && '(打印机不支持)'}
+          </Radio>
         </Radio.Group>
       </div>
 
-      {/* 单双面与翻转方式 */}
+      {/* 单双面与装订 */}
       <div className="drawer-section-box">
         <div className="drawer-field-head">
           <div className="field-title-group">
-            <Typography.Text strong>单双面与翻转</Typography.Text>
+            <Typography.Text strong>单双面与装订</Typography.Text>
           </div>
           <Switch checked={useCustomSides} onChange={setUseCustomSides} />
         </div>
-        <Space direction="vertical" style={{ width: '100%' }} size={10}>
-          <Radio.Group
-            disabled={!useCustomSides}
-            value={sidesMode}
-            onChange={(event) => setSidesMode(event.target.value as SidesMode)}
-            buttonStyle="solid"
-          >
-            <Radio.Button value="simplex">📃 单面打印</Radio.Button>
-            <Radio.Button value="duplex" disabled={!duplexEnabled}>
-              📄 双面打印
-            </Radio.Button>
-          </Radio.Group>
+        <Radio.Group
+          disabled={!useCustomSides}
+          value={sidesMode}
+          onChange={(e) => setSidesMode(e.target.value)}
+        >
+          <Radio value="simplex">单面打印</Radio>
+          <Radio value="duplex" disabled={!duplexEnabled}>
+            双面打印 {!duplexEnabled && '(打印机不支持)'}
+          </Radio>
+        </Radio.Group>
 
-          {sidesMode === 'duplex' && duplexEnabled && (
+        {sidesMode === 'duplex' && (
+          <div style={{ marginTop: 8, paddingLeft: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>
+              装订翻转：
+            </Typography.Text>
             <Radio.Group
+              size="small"
               disabled={!useCustomSides}
               value={flipMode}
-              onChange={(event) => setFlipMode(event.target.value as FlipMode)}
+              onChange={(e) => setFlipMode(e.target.value)}
             >
-              <Radio.Button value="longEdge">长边翻转 (如同翻书)</Radio.Button>
-              <Radio.Button value="shortEdge">短边翻转 (如同挂历)</Radio.Button>
+              <Radio value="longEdge">长边翻转</Radio>
+              <Radio value="shortEdge">短边翻转</Radio>
             </Radio.Group>
-          )}
-        </Space>
+          </div>
+        )}
       </div>
 
       {/* 打印份数 */}
       <div className="drawer-section-box">
         <div className="drawer-field-head">
           <div className="field-title-group">
-            <Typography.Text strong>单文件份数</Typography.Text>
+            <Typography.Text strong>打印份数</Typography.Text>
           </div>
           <Switch checked={useCustomCopies} onChange={setUseCustomCopies} />
         </div>
         <InputNumber
           min={1}
           max={99}
-          disabled={!useCustomCopies}
           value={copies}
+          disabled={!useCustomCopies}
+          onChange={(val) => setCopies(val || 1)}
           addonAfter="份"
-          onChange={(value) => setCopies(typeof value === 'number' && value > 0 ? value : 1)}
         />
       </div>
     </Drawer>

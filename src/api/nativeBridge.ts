@@ -45,6 +45,23 @@ export async function runPrintBatch(request: PrintBatchRequest): Promise<PrintBa
   return invokeCommand<PrintBatchResult>('run_print_batch', { request });
 }
 
+export interface DocumentProbeResult {
+  page_count?: number | null;
+}
+
+export async function probeDocumentInfo(path: string): Promise<{ pageCount: number | null }> {
+  if (!isTauriRuntime()) {
+    return { pageCount: null };
+  }
+  try {
+    const res = await invokeCommand<DocumentProbeResult>('probe_document_info', { path });
+    return { pageCount: res.page_count ?? null };
+  } catch {
+    return { pageCount: null };
+  }
+}
+
+
 export interface ProxyConfigPayload {
   useSystemProxy: boolean;
   customProxyUrl?: string;
