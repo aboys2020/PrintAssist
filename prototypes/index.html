@@ -3,46 +3,129 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>打印助手 · 原型方向比较</title>
+  <title>打印助手 · 原型体验中心</title>
   <style>
     * { box-sizing: border-box; }
     :root { color-scheme: light; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; }
-    body { margin: 0; min-height: 100vh; color: #172033; background: #eef1f5; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 22px 30px; background: #fff; border-bottom: 1px solid #dce1e8; }
+    body { margin: 0; min-height: 100vh; color: #172033; background: #eef2f7; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 32px; background: #fff; border-bottom: 1px solid #dce1e8; }
     h1 { margin: 0; font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif; font-size: 22px; letter-spacing: -.02em; }
     header p { margin: 5px 0 0; color: #687083; font-size: 13px; }
-    .badge { padding: 7px 10px; border: 1px solid #cfd6e1; color: #4c566a; font-size: 12px; }
-    main { width: min(1480px, 100%); margin: 0 auto; padding: 26px 30px 34px; }
-    .notice { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 20px; padding: 15px 18px; background: #182131; color: #f5f7fb; }
-    .notice strong { font-size: 14px; }
-    .notice span { color: #bbc4d2; font-size: 12px; }
+    .badge { padding: 6px 12px; border-radius: 99px; background: #eff4ff; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 12px; font-weight: 600; }
+    main { width: min(1480px, 100%); margin: 0 auto; padding: 24px 32px 36px; display: flex; flex-direction: column; gap: 20px; }
+    
+    /* Hero Featured Next-Gen Card */
+    .hero-card {
+      background: linear-gradient(135deg, #0b1528 0%, #112344 60%, #162f5d 100%);
+      border-radius: 14px;
+      padding: 24px 28px;
+      color: #fff;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 28px;
+      align-items: center;
+      box-shadow: 0 12px 32px rgba(11, 21, 40, 0.25);
+    }
+    .hero-tag { display: inline-flex; align-items: center; gap: 6px; background: rgba(59, 130, 246, 0.25); border: 1px solid rgba(59, 130, 246, 0.4); color: #93c5fd; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 10px; }
+    .hero-title { font-size: 24px; font-weight: 700; margin: 0 0 8px; }
+    .hero-desc { font-size: 13px; color: #cbd5e1; line-height: 1.6; margin: 0 0 16px; }
+    .hero-features { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 12px; color: #94a3b8; }
+    .hero-features li { display: flex; align-items: center; gap: 6px; }
+    .hero-features li::before { content: "✦"; color: #3b82f6; font-size: 10px; }
+    .hero-action { display: flex; flex-direction: column; gap: 10px; }
+    .btn-hero-primary { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 14px 20px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; transition: all 0.2s; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4); }
+    .btn-hero-primary:hover { background: #1d4ed8; transform: translateY(-2px); }
+    .hero-note { font-size: 11px; color: #94a3b8; text-align: center; }
+
+    .section-divider { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+    .section-divider h3 { font-size: 15px; font-weight: 700; color: #475569; margin: 0; }
+    .section-divider-line { flex: 1; height: 1px; background: #cbd5e1; }
+
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-    article { overflow: hidden; background: #fff; border: 1px solid #d9dfe7; box-shadow: 0 14px 34px rgba(28, 39, 57, .08); }
+    article { overflow: hidden; background: #fff; border: 1px solid #d9dfe7; border-radius: 10px; box-shadow: 0 6px 18px rgba(28, 39, 57, .06); }
     .preview { position: relative; aspect-ratio: 16/10; overflow: hidden; background: #dde3eb; border-bottom: 1px solid #d9dfe7; }
     iframe { width: 1440px; height: 900px; transform: scale(.293); transform-origin: top left; border: 0; pointer-events: none; }
-    .letter { position: absolute; top: 12px; left: 12px; display: grid; place-items: center; width: 34px; height: 34px; color: #fff; background: #172033; font: 700 15px/1 "Segoe UI"; }
+    .letter { position: absolute; top: 12px; left: 12px; display: grid; place-items: center; width: 34px; height: 34px; color: #fff; background: #172033; border-radius: 6px; font: 700 15px/1 "Segoe UI"; }
     .copy { padding: 18px; }
-    h2 { margin: 0 0 7px; font-size: 18px; }
+    h2 { margin: 0 0 7px; font-size: 17px; }
     .copy p { min-height: 42px; margin: 0 0 16px; color: #667084; font-size: 13px; line-height: 1.6; }
-    a { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 11px 13px; color: #fff; background: #172033; text-decoration: none; font-size: 13px; font-weight: 650; }
-    a:hover { background: #2c5cff; }
-    footer { margin-top: 22px; color: #737c8d; font-size: 12px; text-align: center; }
-    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .preview { aspect-ratio: 16/7; } iframe { transform: scale(.67); } }
+    a.btn-card { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 14px; color: #172033; background: #f1f5f9; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 650; transition: all 0.15s; }
+    a.btn-card:hover { background: #2563eb; color: #fff; }
+    footer { margin-top: 10px; color: #737c8d; font-size: 12px; text-align: center; }
+    @media (max-width: 980px) { .hero-card { grid-template-columns: 1fr; } .grid { grid-template-columns: 1fr; } .preview { aspect-ratio: 16/7; } iframe { transform: scale(.67); } }
   </style>
 </head>
 <body>
   <header>
-    <div><h1>打印助手 · 原型方向比较</h1><p>三套原型拥有相同内容与交互，只比较视觉语言、信息密度与操作节奏。</p></div>
-    <span class="badge">1440 × 900 桌面应用</span>
+    <div>
+      <h1>打印助手 · 原型体验中心</h1>
+      <p>比较不同设计方向与全新升级版交互，所有原型均可独立点击操作体验。</p>
+    </div>
+    <span class="badge">Windows 批量打印控制工具</span>
   </header>
   <main>
-    <div class="notice"><strong>请分别打开并实际点击体验</strong><span>重点体验：公共设置、单文件覆盖、能力禁用、打印结果和失败重试</span></div>
+
+    <!-- Flagship Next-Gen Prototype -->
+    <div class="hero-card">
+      <div>
+        <div class="hero-tag">🌟 推荐重点体验 · 全新 2.0 体验升级版</div>
+        <h2 class="hero-title">Next-Gen Pro 智能打印控制台</h2>
+        <p class="hero-desc">
+          融合 Fluent 2 现代质感与高效率办公理念，新增<strong>耗材纸张智能计算条</strong>、<strong>批量多选快捷设置栏</strong>、<strong>行内一键覆盖切换</strong>、<strong>可视化页码网格</strong>与<strong>全流程打印动态反馈</strong>。
+        </p>
+        <ul class="hero-features">
+          <li>智能纸张与节约计算 (Duplex Calculator)</li>
+          <li>批量多选操作栏 (设双面/转黑白/调份数)</li>
+          <li>行内微调芯片 (无需弹窗直接点击覆盖)</li>
+          <li>单文件可视化页码缩略图勾选 (1..12页)</li>
+          <li>拖拽排序与上下移动调整装订顺序</li>
+          <li>真实模拟全生命周期打印进度与单项重试</li>
+        </ul>
+      </div>
+      <div class="hero-action">
+        <a href="next-gen/index.html" class="btn-hero-primary">
+          打开 2.0 升级版原型 <span>→</span>
+        </a>
+        <span class="hero-note">推荐在 1440×900 或标准浏览器窗口下全屏体验</span>
+      </div>
+    </div>
+
+    <!-- Direction A/B/C Section -->
+    <div class="section-divider">
+      <h3>经典设计方向归档 (方向 A / B / C)</h3>
+      <div class="section-divider-line"></div>
+    </div>
+
     <section class="grid">
-      <article><div class="preview"><iframe src="direction-a/index.html" title="方向 A 预览"></iframe><b class="letter">A</b></div><div class="copy"><h2>明亮精密工作台</h2><p>高信息密度、克制蓝色与清晰网格，面向高频办公和熟练用户。</p><a href="direction-a/index.html">打开完整原型 <span>→</span></a></div></article>
-      <article><div class="preview"><iframe src="direction-b/index.html" title="方向 B 预览"></iframe><b class="letter">B</b></div><div class="copy"><h2>温暖纸张工作室</h2><p>暖白纸张层级、自然墨色与分步操作，让复杂设置更友好。</p><a href="direction-b/index.html">打开完整原型 <span>→</span></a></div></article>
-      <article><div class="preview"><iframe src="direction-c/index.html" title="方向 C 预览"></iframe><b class="letter">C</b></div><div class="copy"><h2>深色打印控制台</h2><p>设备面板语汇、鲜明状态和稳定节奏，强调批处理监控与可靠性。</p><a href="direction-c/index.html">打开完整原型 <span>→</span></a></div></article>
+      <article>
+        <div class="preview"><iframe src="direction-a/index.html" title="方向 A 预览"></iframe><b class="letter">A</b></div>
+        <div class="copy">
+          <h2>明亮精密工作台</h2>
+          <p>高信息密度、克制蓝色与清晰网格，面向高频办公和熟练用户。</p>
+          <a href="direction-a/index.html" class="btn-card">打开原型 <span>→</span></a>
+        </div>
+      </article>
+      <article>
+        <div class="preview"><iframe src="direction-b/index.html" title="方向 B 预览"></iframe><b class="letter">B</b></div>
+        <div class="copy">
+          <h2>温暖纸张工作室</h2>
+          <p>暖白纸张层级、自然墨色与分步操作，让复杂设置更友好。</p>
+          <a href="direction-b/index.html" class="btn-card">打开原型 <span>→</span></a>
+        </div>
+      </article>
+      <article>
+        <div class="preview"><iframe src="direction-c/index.html" title="方向 C 预览"></iframe><b class="letter">C</b></div>
+        <div class="copy">
+          <h2>深色打印控制台</h2>
+          <p>设备面板语汇、鲜明状态和稳定节奏，强调批处理监控与可靠性。</p>
+          <a href="direction-c/index.html" class="btn-card">打开原型 <span>→</span></a>
+        </div>
+      </article>
     </section>
-    <footer>选择时可以指定整套方向，也可以提出“采用 A 的布局 + B 的色彩 + C 的状态反馈”一类组合意见。</footer>
+
+    <footer>
+      所有原型均支持追加文件、切换打印机、单双面联动、单文件覆盖、开始打印模拟和失败重试。
+    </footer>
   </main>
 </body>
 </html>

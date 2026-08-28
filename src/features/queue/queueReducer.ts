@@ -11,13 +11,16 @@ import type { FileSettingsOverride } from '../../domain/printSettings';
 export type QueueAction =
   | { type: 'append_files'; paths: string[] }
   | { type: 'remove_item'; id: string }
+  | { type: 'batch_remove'; ids: string[] }
   | { type: 'clear_queue' }
   | { type: 'update_override'; id: string; override: FileSettingsOverride }
+  | { type: 'batch_update_override'; ids: string[]; overridePatch: Partial<FileSettingsOverride> }
   | { type: 'set_item_status'; id: string; status: QueueItem['status']; errorMessage?: string }
   | { type: 'begin_print' }
   | { type: 'finish_print'; summary: PrintJobSummary }
   | { type: 'retry_failed' }
   | { type: 'move_item'; id: string; direction: 'up' | 'down' };
+
 
 const SUPPORTED_EXTENSIONS: Record<string, SupportedDocumentKind> = {
   pdf: 'pdf',
@@ -110,6 +113,14 @@ export function queueReducer(state: QueueState, action: QueueAction): QueueState
         items: state.items.filter((item) => item.id !== action.id),
       };
 
+    case 'batch_remove': {
+      const removeSet = new Set(action.ids);
+      return {
+        ...state,
+        items: state.items.filter((item) => !removeSet.has(item.id)),
+      };
+    }
+
     case 'clear_queue':
       return createEmptyQueueState();
 
@@ -125,6 +136,25 @@ export function queueReducer(state: QueueState, action: QueueAction): QueueState
             : item,
         ),
       };
+
+    case 'batch_update_override': {
+      const targetSet = new Set(action.ids);
+      return {
+        ...state,
+        items: state.items.map((item) =>
+          targetSet.has(item.id)
+            ? {
+                ...item,
+                override: {
+                  ...item.override,
+                  ...action.overridePatch,
+                },
+              }
+            : item,
+        ),
+      };
+    }
+
 
     case 'set_item_status':
       return {

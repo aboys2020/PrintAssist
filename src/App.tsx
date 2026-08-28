@@ -1,13 +1,19 @@
 import {
   Button,
   ConfigProvider,
-  Layout,
   Modal,
-  Space,
-  Typography,
   message,
 } from 'antd';
-import { FilePlus2, FolderPlus, Printer, RefreshCw } from 'lucide-react';
+import {
+  FilePlus2,
+  FolderPlus,
+  Keyboard,
+  Printer,
+  RefreshCw,
+  Settings,
+  Sparkles,
+  UploadCloud,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import type { DragEvent } from 'react';
 import {
@@ -21,7 +27,6 @@ import {
   subscribeIncomingFiles,
   subscribeNativeDragDrop,
 } from './api/nativeBridge';
-import { AppLogo } from './components/AppLogo';
 import {
   createDefaultGlobalSettings,
   evaluateSettingAvailability,
@@ -45,8 +50,6 @@ import {
 } from './domain/proxySettings';
 import type { SystemPrinter } from './shared/contracts/printer';
 import type { PrintQueueItemPayload } from './shared/contracts/printJob';
-
-const { Header, Content, Sider, Footer } = Layout;
 
 export function App() {
   const [queueState, dispatch] = useReducer(queueReducer, undefined, createEmptyQueueState);
@@ -122,7 +125,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // Tauri 2: 桌面拖放路径只能从原生 DragDrop 事件拿到，不能依赖 HTML5 File.path
     return subscribeNativeDragDrop({
       onHoverChange: setIsDragOver,
       onDrop: (paths) => {
@@ -146,9 +148,7 @@ export function App() {
   }, []);
 
   const appendPaths = (paths: string[]) => {
-    if (paths.length === 0) {
-      return;
-    }
+    if (paths.length === 0) return;
     dispatch({ type: 'append_files', paths });
     message.success(`已追加 ${paths.length} 个文件`);
   };
@@ -172,10 +172,7 @@ export function App() {
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragOver(false);
-    // 桌面端由 subscribeNativeDragDrop 处理；HTML5 File.path 在 Tauri/WebView2 中为空
-    if (isTauriRuntime()) {
-      return;
-    }
+    if (isTauriRuntime()) return;
     const paths = Array.from(event.dataTransfer.files)
       .map((file) => (file as File & { path?: string }).path)
       .filter((path): path is string => Boolean(path));
@@ -251,9 +248,7 @@ export function App() {
 
   const executePrint = async (onlyFailed = false) => {
     const payloads = buildBatchPayload(onlyFailed);
-    if (!payloads) {
-      return;
-    }
+    if (!payloads) return;
 
     const hasOffice = payloads.some((item) =>
       /\.(doc|docx|xls|xlsx|ppt|pptx)$/i.test(item.path),
@@ -270,9 +265,7 @@ export function App() {
           onCancel: () => resolve(false),
         });
       });
-      if (!confirmed) {
-        return;
-      }
+      if (!confirmed) return;
       setAllowAssociationFallback(true);
     }
 
@@ -319,7 +312,6 @@ export function App() {
     setUpdateModalOpen(true);
   };
 
-  /** 检查更新；silent 用于启动时：无更新/失败均不打扰用户。 */
   const runUpdateCheck = async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
     try {
@@ -331,16 +323,12 @@ export function App() {
         password: proxyConfig.password,
       });
       if (!updateInfo.available) {
-        if (!silent) {
-          message.success('当前已是最新版本');
-        }
+        if (!silent) message.success('当前已是最新版本');
         return;
       }
       promptInstallUpdate(updateInfo);
     } catch (error) {
-      if (!silent) {
-        message.error(error instanceof Error ? error.message : '检查更新失败');
-      }
+      if (!silent) message.error(error instanceof Error ? error.message : '检查更新失败');
     }
   };
 
@@ -348,143 +336,168 @@ export function App() {
     await runUpdateCheck({ silent: false });
   };
 
-  // 启动后自动检查更新：仅在有新版本时弹窗提示
   useEffect(() => {
-    if (!isTauriRuntime()) {
-      return;
-    }
+    if (!isTauriRuntime()) return;
     let cancelled = false;
     const startupCheckTimer = window.setTimeout(() => {
-      if (!cancelled) {
-        void runUpdateCheck({ silent: true });
-      }
+      if (!cancelled) void runUpdateCheck({ silent: true });
     }, 800);
     return () => {
       cancelled = true;
       window.clearTimeout(startupCheckTimer);
     };
-    // 仅启动时检查一次，使用首屏已加载的代理设置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleShortcutsHelp = () => {
+    Modal.info({
+      title: '常用操作指南',
+      content: (
+        <div style={{ lineHeight: 1.8, fontSize: '13px', paddingTop: '8px' }}>
+          <p>• <strong>文件追加</strong>：支持拖拽文件/文件夹，或在 Windows 资源管理器中右键选中文件“发送到 打印助手”追加到当前批次。</p>
+          <p>• <strong>快捷微调</strong>：在列表行内直接点击色彩或单双面芯片即可直接切换，无需每次打开抽屉。</p>
+          <p>• <strong>批量控制</strong>：勾选文件后，顶部工具条点亮批量双面、批量单面、批量黑白及批量删除。</p>
+          <p>• <strong>装订顺序</strong>：点击行首上移/下移箭头可调整文档打印先后顺序。</p>
+        </div>
+      ),
+      okText: '知道了',
+    });
+  };
 
   return (
     <ConfigProvider
       theme={{
         token: {
-          colorPrimary: '#1557d0',
-          colorText: '#172033',
-          colorBorder: '#d7e0ec',
-          colorBorderSecondary: '#e8eef5',
+          colorPrimary: '#1e5eff',
+          colorText: '#0f172a',
+          colorBorder: '#e2e8f0',
+          colorBorderSecondary: '#f1f5f9',
           colorBgContainer: '#ffffff',
-          colorBgLayout: '#f4f7fb',
+          colorBgLayout: '#f4f6fa',
           borderRadius: 10,
           borderRadiusLG: 14,
-          borderRadiusSM: 8,
-          borderRadiusXS: 6,
+          borderRadiusSM: 6,
+          borderRadiusXS: 4,
           controlHeight: 34,
-          fontFamily: '"Segoe UI Variable", "Microsoft YaHei UI", sans-serif',
-          boxShadow: '0 4px 16px rgba(23, 32, 51, 0.06)',
-          boxShadowSecondary: '0 8px 24px rgba(23, 32, 51, 0.08)',
-          motionDurationMid: '0.2s',
-          motionDurationSlow: '0.28s',
-        },
-        components: {
-          Button: {
-            borderRadius: 10,
-            controlHeight: 34,
-            paddingInline: 14,
-          },
-          Input: {
-            borderRadius: 10,
-          },
-          Select: {
-            borderRadius: 10,
-          },
-          Segmented: {
-            borderRadius: 10,
-            borderRadiusSM: 8,
-          },
-          Card: {
-            borderRadiusLG: 14,
-          },
-          Modal: {
-            borderRadiusLG: 16,
-          },
-          Drawer: {
-            borderRadiusLG: 16,
-          },
-          Tag: {
-            borderRadiusSM: 999,
-          },
-          Alert: {
-            borderRadiusLG: 12,
-          },
-          Table: {
-            borderRadius: 12,
-            headerBorderRadius: 12,
-          },
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
+          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02)',
         },
       }}
     >
-      <Layout className="app-shell">
-        <Header className="app-header">
-          <div className="brand-group">
-            <div className="brand-mark">
-              <AppLogo size={30} />
+      <div className="app-shell-root">
+        {/* App Header (100% Prototype Replicated) */}
+        <header className="app-header">
+          <div className="brand-section">
+            <div className="app-logo">
+              <Printer size={18} />
             </div>
-            <div className="brand-copy">
-              <Typography.Title level={4}>打印助手</Typography.Title>
-              <Typography.Text>
-                当前批次 · {queueState.items.length} 个文件
-                {queueState.isPrinting ? ' · 打印中' : ''}
-              </Typography.Text>
+            <div className="brand-titles">
+              <div className="brand-name">
+                打印助手 <span className="version-tag">v{__APP_VERSION__}</span>
+              </div>
+              <div className="brand-meta">Windows 批量文件打印控制中心</div>
             </div>
           </div>
-          <Space className="header-actions" size={10}>
-            <Button ghost onClick={() => setProxyModalOpen(true)}>
-              代理设置
-            </Button>
-            <Button ghost icon={<RefreshCw size={14} />} onClick={() => void refreshPrinters()}>
-              刷新打印机
-            </Button>
-            <Button ghost onClick={() => void handleCheckUpdate()}>
-              检查更新
-            </Button>
-          </Space>
-        </Header>
-        <Layout className="app-body">
-          <Sider width={342} theme="light" className="control-rail">
-            <Typography.Text className="section-index">01 / 文件入口</Typography.Text>
-            <Typography.Title level={5}>追加打印文件</Typography.Title>
-            <div
-              className={`drop-zone ${isDragOver ? 'dragging' : ''}`}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setIsDragOver(true);
-              }}
-              onDragLeave={() => setIsDragOver(false)}
-              onDrop={handleDrop}
+
+          <div className="header-quick-stats">
+            <div className="status-pulse" />
+            <span>{queueState.items.length} 个文件已就绪</span>
+            <span style={{ opacity: 0.4 }}>|</span>
+            <span>
+              {selectedPrinter
+                ? `${selectedPrinter.name} (${selectedPrinter.state === 'ready' ? '在线' : selectedPrinter.state === 'offline' ? '离线' : '就绪'})`
+                : loadingPrinters
+                  ? '读取设备中...'
+                  : '未选择打印机'}
+            </span>
+          </div>
+
+          <div className="header-actions">
+            <button type="button" className="btn-ghost-dark" onClick={handleShortcutsHelp}>
+              <Keyboard size={14} /> 操作指南
+            </button>
+            <button
+              type="button"
+              className="btn-ghost-dark"
+              onClick={() => void refreshPrinters()}
             >
-              <FilePlus2 size={24} />
-              <strong>拖放文件到这里</strong>
-              <span>右键菜单、发送到和页面选择都会追加到当前批次</span>
-            </div>
-            <div className="entry-actions">
-              <Button
-                icon={<FilePlus2 size={15} />}
-                disabled={queueState.isPrinting}
+              <RefreshCw size={14} /> 刷新设备
+            </button>
+            <button
+              type="button"
+              className="btn-ghost-dark"
+              onClick={() => setProxyModalOpen(true)}
+            >
+              <Settings size={14} /> 代理设置
+            </button>
+            <button
+              type="button"
+              className="btn-ghost-dark"
+              onClick={() => void handleCheckUpdate()}
+            >
+              <Sparkles size={14} /> 检查更新
+            </button>
+          </div>
+        </header>
+
+        {/* App Body Grid (100% Prototype Replicated) */}
+        <div className="app-body">
+          {/* Left Control Rail */}
+          <aside className="control-rail">
+            {/* 01 / 文件入口 */}
+            <div className="rail-section">
+              <div className="section-header">
+                <span className="section-title">
+                  <FilePlus2 size={14} /> 01 / 文件入口
+                </span>
+                <span className="section-badge">支持追加</span>
+              </div>
+
+              <div
+                className={`drop-card ${isDragOver ? 'drag-over' : ''}`}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDragOver(true);
+                }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={handleDrop}
                 onClick={() => void handlePickFiles()}
               >
-                选择文件
-              </Button>
-              <Button
-                icon={<FolderPlus size={15} />}
-                disabled={queueState.isPrinting}
-                onClick={() => void handlePickFolder()}
-              >
-                选择文件夹
-              </Button>
+                <div className="drop-icon-wrap">
+                  <UploadCloud size={20} />
+                </div>
+                <div className="drop-main-text">拖放文件或文件夹到这里</div>
+                <div className="drop-sub-text">右键“发送到”与追加模式已启用</div>
+                <div className="format-chips">
+                  <span className="fmt-chip fmt-pdf">PDF</span>
+                  <span className="fmt-chip fmt-xls">Excel</span>
+                  <span className="fmt-chip fmt-doc">Word</span>
+                  <span className="fmt-chip fmt-ppt">PPT</span>
+                  <span className="fmt-chip fmt-img">JPG/PNG</span>
+                </div>
+              </div>
+
+              <div className="entry-btn-grid">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={queueState.isPrinting}
+                  onClick={() => void handlePickFiles()}
+                >
+                  <FilePlus2 size={14} /> 选择文件
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={queueState.isPrinting}
+                  onClick={() => void handlePickFolder()}
+                >
+                  <FolderPlus size={14} /> 选择文件夹
+                </button>
+              </div>
             </div>
+
+            {/* 02 打印机 & 03 公共设置 */}
             <GlobalSettingsPanel
               printers={printers}
               settings={globalSettings}
@@ -494,31 +507,10 @@ export function App() {
                 setGlobalSettings(sanitizeSettingsForPrinter(nextSettings, printer));
               }}
             />
-          </Sider>
-          <Content className="queue-panel">
-            <div className="queue-heading">
-              <div>
-                <Typography.Text className="section-index">当前批次</Typography.Text>
-                <Typography.Title level={3}>待打印文件</Typography.Title>
-              </div>
-              <Space>
-                <Button
-                  disabled={queueState.isPrinting || queueState.items.length === 0}
-                  onClick={() => dispatch({ type: 'clear_queue' })}
-                >
-                  清空
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<Printer size={16} />}
-                  loading={queueState.isPrinting}
-                  disabled={!availability.printEnabled || queueState.items.length === 0}
-                  onClick={() => void executePrint(false)}
-                >
-                  开始打印
-                </Button>
-              </Space>
-            </div>
+          </aside>
+
+          {/* Right Main Workspace */}
+          <main className="main-workspace">
             <PrintSummary
               summary={queueState.lastSummary}
               onRetryFailed={() => {
@@ -526,23 +518,38 @@ export function App() {
                 void executePrint(true);
               }}
             />
-            <div className="queue-body">
-              <PrintQueue
-                items={queueState.items}
-                globalSettings={globalSettings}
-                isPrinting={queueState.isPrinting}
-                onRemove={(id) => dispatch({ type: 'remove_item', id })}
-                onOpenSettings={(id) => setSettingsItemId(id)}
-              />
-            </div>
-          </Content>
-        </Layout>
-        <Footer className="app-footer">
-          <Typography.Text className="app-version" type="secondary">
-            v{__APP_VERSION__}
-          </Typography.Text>
-        </Footer>
-      </Layout>
+
+            <PrintQueue
+              items={queueState.items}
+              globalSettings={globalSettings}
+              isPrinting={queueState.isPrinting}
+              colorEnabled={availability.colorEnabled}
+              duplexEnabled={availability.duplexEnabled}
+              printDisabled={!availability.printEnabled}
+              onRemove={(id) => dispatch({ type: 'remove_item', id })}
+              onBatchRemove={(ids) => {
+                dispatch({ type: 'batch_remove', ids });
+                message.success(`已批量移除 ${ids.length} 个文件`);
+              }}
+              onOpenSettings={(id) => setSettingsItemId(id)}
+              onUpdateOverride={(id, override) =>
+                dispatch({ type: 'update_override', id, override })
+              }
+              onBatchUpdateOverride={(ids, overridePatch) => {
+                dispatch({ type: 'batch_update_override', ids, overridePatch });
+                message.success(`已批量更新 ${ids.length} 个文件的打印设置`);
+              }}
+              onMoveItem={(id, direction) =>
+                dispatch({ type: 'move_item', id, direction })
+              }
+              onClearQueue={() => dispatch({ type: 'clear_queue' })}
+              onStartPrint={() => void executePrint(false)}
+              onPickFiles={() => void handlePickFiles()}
+            />
+          </main>
+        </div>
+      </div>
+
       <FileSettingsDrawer
         open={Boolean(settingsItem)}
         item={settingsItem}
@@ -551,13 +558,12 @@ export function App() {
         duplexEnabled={availability.duplexEnabled}
         onClose={() => setSettingsItemId(null)}
         onSave={(override) => {
-          if (!settingsItem) {
-            return;
-          }
+          if (!settingsItem) return;
           dispatch({ type: 'update_override', id: settingsItem.id, override });
           message.success('已保存单文件设置');
         }}
       />
+
       <Modal
         title="代理设置"
         open={proxyModalOpen}
@@ -572,6 +578,7 @@ export function App() {
       >
         <ProxySettingsPanel settings={proxySettings} onChange={setProxySettings} />
       </Modal>
+
       <UpdateModal
         open={updateModalOpen}
         updateInfo={pendingUpdateInfo}

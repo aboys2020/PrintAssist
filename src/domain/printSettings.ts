@@ -1,5 +1,6 @@
 import type { SystemPrinter } from '../shared/contracts/printer';
-import type { PageRangeInput } from './pageRange';
+import { parsePageRangeExpression, type PageRangeInput } from './pageRange';
+
 
 export type ColorMode = 'color' | 'monochrome';
 export type SidesMode = 'simplex' | 'duplex';
@@ -129,3 +130,74 @@ export function sanitizeSettingsForPrinter(
 
   return nextSettings;
 }
+
+export interface BatchMetrics {
+  totalFiles: number;
+  totalPages: number;
+  totalSheets: number;
+  savedSheets: number;
+  savingPercentage: number;
+  colorFilesCount: number;
+  monochromeFilesCount: number;
+}
+
+/**
+ * Calculates overall batch pages, physical sheet consumption, and paper savings.
+ */
+export function calculateBatchMetrics(
+  items: Array<{
+    pageCount: number | null;
+    override?: FileSettingsOverride;
+    kind?: string;
+  }>,
+  globalSettings: PrintSettings,
+): BatchMetrics {
+  let totalPages = 0;
+  let totalSheets = 0;
+  let colorFilesCount = 0;
+  let monochromeFilesCount = 0;
+
+  for (const item of items) {
+    const merged = mergePrintSettings(globalSettings, item.override);
+    if (merged.colorMode === 'color') {
+      colorFilesCount += 1;
+    } else {
+      monochromeFilesCount += 1;
+    }
+
+    let itemPages = item.pageCount && item.pageCount > 0 ? item.pageCount : 1;
+    if (merged.pageRange.mode === 'custom' && merged.pageRange.expression.trim()) {
+      const parsed = parsePageRangeExpression(
+        merged.pageRange.expression,
+        item.pageCount ?? undefined,
+      );
+      if (parsed.ok) {
+        itemPages = parsed.pages.length;
+      }
+    }
+
+    const copies = merged.copies > 0 ? merged.copies : 1;
+    const pagesForThisItem = itemPages * copies;
+    const sheetsPerCopy =
+      merged.sidesMode === 'duplex' ? Math.ceil(itemPages / 2) : itemPages;
+    const sheetsForThisItem = sheetsPerCopy * copies;
+
+    totalPages += pagesForThisItem;
+    totalSheets += sheetsForThisItem;
+  }
+
+  const savedSheets = Math.max(0, totalPages - totalSheets);
+  const savingPercentage =
+    totalPages > 0 ? Math.round((savedSheets / totalPages) * 100) : 0;
+
+  return {
+    totalFiles: items.length,
+    totalPages,
+    totalSheets,
+    savedSheets,
+    savingPercentage,
+    colorFilesCount,
+    monochromeFilesCount,
+  };
+}
+

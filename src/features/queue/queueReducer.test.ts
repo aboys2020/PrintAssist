@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyQueueState } from '../../domain/queueTypes';
+import { calculateBatchMetrics, createDefaultGlobalSettings } from '../../domain/printSettings';
 import { createPrintSummary, detectDocumentKind, queueReducer } from './queueReducer';
 
 describe('detectDocumentKind', () => {
@@ -57,4 +58,80 @@ describe('queueReducer', () => {
     state = queueReducer(state, { type: 'clear_queue' });
     expect(state.items).toHaveLength(0);
   });
+
+  it('supports batch update and batch remove', () => {
+    let state = queueReducer(createEmptyQueueState(), {
+      type: 'append_files',
+      paths: ['C:\\\\docs\\\\a.pdf', 'C:\\\\docs\\\\b.pdf', 'C:\\\\docs\\\\c.pdf'],
+    });
+    const idA = state.items[0].id;
+    const idB = state.items[1].id;
+    const idC = state.items[2].id;
+
+    state = queueReducer(state, {
+      type: 'batch_update_override',
+      ids: [idA, idB],
+      overridePatch: { colorMode: 'color', sidesMode: 'duplex' },
+    });
+    expect(state.items[0].override.colorMode).toBe('color');
+    expect(state.items[0].override.sidesMode).toBe('duplex');
+    expect(state.items[1].override.colorMode).toBe('color');
+    expect(state.items[2].override.colorMode).toBeUndefined();
+
+    state = queueReducer(state, {
+      type: 'batch_remove',
+      ids: [idA, idC],
+    });
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0].id).toBe(idB);
+  });
+
+  it('supports reordering items with move_item', () => {
+    let state = queueReducer(createEmptyQueueState(), {
+      type: 'append_files',
+      paths: ['C:\\\\docs\\\\1.pdf', 'C:\\\\docs\\\\2.pdf', 'C:\\\\docs\\\\3.pdf'],
+    });
+    const id2 = state.items[1].id;
+
+    state = queueReducer(state, {
+      type: 'move_item',
+      id: id2,
+      direction: 'up',
+    });
+    expect(state.items.map((item) => item.fileName)).toEqual(['2.pdf', '1.pdf', '3.pdf']);
+
+    state = queueReducer(state, {
+      type: 'move_item',
+      id: id2,
+      direction: 'down',
+    });
+    expect(state.items.map((item) => item.fileName)).toEqual(['1.pdf', '2.pdf', '3.pdf']);
+  });
 });
+
+describe('calculateBatchMetrics', () => {
+  it('correctly calculates total pages, sheets, and paper savings with duplex', () => {
+    const globalSettings = createDefaultGlobalSettings('HP');
+    globalSettings.sidesMode = 'duplex';
+
+    const items = [
+      { pageCount: 4, override: {} },
+      { pageCount: 12, override: { pageRange: { mode: 'custom' as const, expression: '1,3,5-8' } } }, // 6 pages
+      { pageCount: 1, override: { sidesMode: 'simplex' as const } }, // 1 page, simplex = 1 sheet
+    ];
+
+    const metrics = calculateBatchMetrics(items, globalSettings);
+    // Item 1: 4 pages duplex -> 2 sheets
+    // Item 2: 6 pages duplex -> 3 sheets
+    // Item 3: 1 page simplex -> 1 sheet
+    // Total pages = 4 + 6 + 1 = 11
+    // Total sheets = 2 + 3 + 1 = 6
+    // Saved sheets = 11 - 6 = 5
+    expect(metrics.totalFiles).toBe(3);
+    expect(metrics.totalPages).toBe(11);
+    expect(metrics.totalSheets).toBe(6);
+    expect(metrics.savedSheets).toBe(5);
+    expect(metrics.savingPercentage).toBe(45);
+  });
+});
+

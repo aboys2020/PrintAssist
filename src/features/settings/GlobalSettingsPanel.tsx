@@ -1,5 +1,4 @@
-import { Alert, InputNumber, Segmented, Typography } from 'antd';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, HardDrive, Printer, Sliders } from 'lucide-react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SystemPrinter } from '../../shared/contracts/printer';
@@ -26,16 +25,10 @@ interface GlobalSettingsPanelProps {
 }
 
 function describePrinterState(printer: SystemPrinter): string {
-  if (printer.state === 'ready') return '在线';
-  if (printer.state === 'offline') return '离线';
-  if (printer.state === 'error') return '错误';
-  return '未知';
-}
-
-function describeCapabilitySupport(support: string): string {
-  if (support === 'supported') return '支持';
-  if (support === 'unsupported') return '不支持';
-  return '未知';
+  if (printer.state === 'ready') return '在线 · 就绪';
+  if (printer.state === 'offline') return '设备离线';
+  if (printer.state === 'error') return '错误状态';
+  return '状态未知';
 }
 
 export function GlobalSettingsPanel({
@@ -55,22 +48,22 @@ export function GlobalSettingsPanel({
       reason.includes('错误') ||
       reason.includes('尚未选择'),
   );
+
   const [printerSelectOpen, setPrinterSelectOpen] = useState(false);
   const printerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const printerMenuRef = useRef<HTMLDivElement | null>(null);
   const [printerMenuPosition, setPrinterMenuPosition] = useState<PrinterMenuPosition | null>(null);
   const printerListboxId = useId();
+
   const selectedPrinterLabel = selectedPrinter
-    ? `${selectedPrinter.name}${selectedPrinter.isDefault ? '（默认）' : ''}`
+    ? `${selectedPrinter.name}${selectedPrinter.isDefault ? ' (默认)' : ''}`
     : loadingPrinters
       ? '正在读取系统打印机…'
       : '选择系统打印机';
 
   const updatePrinterMenuPosition = useCallback(() => {
     const triggerElement = printerTriggerRef.current;
-    if (!triggerElement) {
-      return;
-    }
+    if (!triggerElement) return;
 
     const triggerRect = triggerElement.getBoundingClientRect();
     const viewportHeight = window.innerHeight;
@@ -83,7 +76,10 @@ export function GlobalSettingsPanel({
       spaceBelow >= Math.min(PRINTER_MENU_PREFERRED_MAX_HEIGHT_PIXELS, 160) || spaceBelow >= spaceAbove;
     const availableHeight = Math.max(120, preferBottom ? spaceBelow : spaceAbove);
     const maxHeight = Math.min(PRINTER_MENU_PREFERRED_MAX_HEIGHT_PIXELS, availableHeight);
-    const width = Math.min(Math.max(triggerRect.width, 220), viewportWidth - PRINTER_MENU_VIEWPORT_PADDING_PIXELS * 2);
+    const width = Math.min(
+      Math.max(triggerRect.width, 240),
+      viewportWidth - PRINTER_MENU_VIEWPORT_PADDING_PIXELS * 2,
+    );
     const rawLeft = triggerRect.left;
     const left = Math.min(
       Math.max(PRINTER_MENU_VIEWPORT_PADDING_PIXELS, rawLeft),
@@ -114,15 +110,11 @@ export function GlobalSettingsPanel({
   }, [printerSelectOpen, printers.length, updatePrinterMenuPosition]);
 
   useEffect(() => {
-    if (!printerSelectOpen) {
-      return;
-    }
+    if (!printerSelectOpen) return;
 
     const handlePointerDownOutside = (event: MouseEvent) => {
       const targetNode = event.target;
-      if (!(targetNode instanceof Node)) {
-        return;
-      }
+      if (!(targetNode instanceof Node)) return;
       const clickedInsideTrigger = printerTriggerRef.current?.contains(targetNode);
       const clickedInsideMenu = printerMenuRef.current?.contains(targetNode);
       if (!clickedInsideTrigger && !clickedInsideMenu) {
@@ -143,7 +135,6 @@ export function GlobalSettingsPanel({
     document.addEventListener('mousedown', handlePointerDownOutside);
     document.addEventListener('keydown', handleEscapeKey);
     window.addEventListener('resize', handleViewportChange);
-    // Capture scroll from nested sider so floating menu stays under the trigger.
     window.addEventListener('scroll', handleViewportChange, true);
     return () => {
       document.removeEventListener('mousedown', handlePointerDownOutside);
@@ -153,230 +144,274 @@ export function GlobalSettingsPanel({
     };
   }, [printerSelectOpen, updatePrinterMenuPosition]);
 
+  const handleSelectPrinter = (printer: SystemPrinter) => {
+    onChange({
+      ...settings,
+      printerName: printer.name,
+      colorMode:
+        printer.color.support === 'unsupported' ? 'monochrome' : settings.colorMode,
+      sidesMode:
+        printer.duplex.support === 'unsupported' ? 'simplex' : settings.sidesMode,
+    });
+    setPrinterSelectOpen(false);
+  };
+
   const printerMenu =
     printerSelectOpen && printerMenuPosition
       ? createPortal(
           <div
             ref={printerMenuRef}
             id={printerListboxId}
-            className={`printer-picker-menu printer-picker-menu--${printerMenuPosition.placement}`}
             role="listbox"
-            aria-labelledby="printer-select-label"
+            aria-label="系统打印机列表"
+            className="printer-picker-menu"
             style={{
-              top: printerMenuPosition.top,
-              left: printerMenuPosition.left,
-              width: printerMenuPosition.width,
-              maxHeight: printerMenuPosition.maxHeight,
+              position: 'fixed',
+              top: `${printerMenuPosition.top}px`,
+              left: `${printerMenuPosition.left}px`,
+              width: `${printerMenuPosition.width}px`,
+              maxHeight: `${printerMenuPosition.maxHeight}px`,
             }}
           >
-            {printers.length === 0 ? (
-              <div className="printer-picker-empty">
-                {loadingPrinters ? '正在读取系统打印机…' : '未找到系统打印机'}
-              </div>
-            ) : (
-              printers.map((printer) => {
-                const optionLabel = `${printer.name}${printer.isDefault ? '（默认）' : ''}`;
-                const isSelected = printer.name === settings.printerName;
-                return (
-                  <button
-                    key={printer.name}
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    className={`printer-picker-option${isSelected ? ' is-selected' : ''}`}
-                    onClick={() => {
-                      onChange({ ...settings, printerName: printer.name });
-                      setPrinterSelectOpen(false);
-                    }}
-                  >
-                    <span className="printer-picker-option-name">{optionLabel}</span>
-                    <span className="printer-picker-option-meta">
-                      {describePrinterState(printer)}
-                      {printer.portName ? ` · ${printer.portName}` : ''}
-                    </span>
-                  </button>
-                );
-              })
-            )}
+            {printers.map((printer) => {
+              const isSelected = printer.name === settings.printerName;
+              return (
+                <button
+                  key={printer.name}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`printer-picker-option${isSelected ? ' is-selected' : ''}`}
+                  onClick={() => handleSelectPrinter(printer)}
+                >
+                  <div className="printer-picker-option-name">
+                    <span>{printer.name}</span>
+                    {printer.isDefault && <span className="default-chip">默认</span>}
+                  </div>
+                  <div className="printer-picker-option-meta">
+                    <span className={`state-dot state-${printer.state}`} />
+                    <span>{describePrinterState(printer)}</span>
+                    <span>·</span>
+                    <span>彩色{printer.color.support === 'supported' ? '支持' : '不支持'}</span>
+                    <span>·</span>
+                    <span>双面{printer.duplex.support === 'supported' ? '支持' : '不支持'}</span>
+                  </div>
+                </button>
+              );
+            })}
           </div>,
           document.body,
         )
       : null;
 
   return (
-    <div className="settings-block">
-      <div className="settings-block-head">
-        <Typography.Text className="section-index">02 / 公共设置</Typography.Text>
-        <Typography.Title level={5}>默认打印参数</Typography.Title>
-      </div>
+    <>
+      {/* 02 / 打印设备 */}
+      <div className="rail-section">
+        <div className="section-header">
+          <span className="section-title">
+            <HardDrive size={14} /> 02 / 打印设备
+          </span>
+          <span
+            className="section-link"
+            onClick={() => setPrinterSelectOpen((prev) => !prev)}
+          >
+            切换设备
+          </span>
+        </div>
 
-      <div className="setting-field">
-        <span className="field-label" id="printer-select-label">
-          打印机
-        </span>
-        {/*
-          Custom floating menu (fixed + manual rect), not antd Select portal.
-          Keeps page flow intact while avoiding the invisible-dropdown bug in WebView2.
-        */}
-        <div className="printer-picker">
+        <div className="printer-widget">
           <button
             ref={printerTriggerRef}
             type="button"
-            className={`printer-picker-trigger${printerSelectOpen ? ' is-open' : ''}${
-              loadingPrinters ? ' is-loading' : ''
-            }`}
-            aria-labelledby="printer-select-label"
-            aria-haspopup="listbox"
-            aria-expanded={printerSelectOpen}
-            aria-controls={printerListboxId}
-            disabled={loadingPrinters && printers.length === 0}
-            onClick={() => setPrinterSelectOpen((currentOpen) => !currentOpen)}
+            className="printer-selector-btn"
+            onClick={() => setPrinterSelectOpen((prev) => !prev)}
           >
-            <span className="printer-picker-value">{selectedPrinterLabel}</span>
-            <ChevronDown size={16} className="printer-picker-caret" aria-hidden />
+            <div className="printer-info-group">
+              <div className="printer-avatar">
+                <Printer size={16} />
+              </div>
+              <div className="printer-labels">
+                <span className="printer-active-name" title={selectedPrinterLabel}>
+                  {selectedPrinterLabel}
+                </span>
+                <span
+                  className={`printer-status-text ${selectedPrinter?.state === 'ready' ? 'status-online' : 'status-offline'}`}
+                >
+                  <span className="dot" />
+                  {selectedPrinter ? describePrinterState(selectedPrinter) : '未选择设备'}
+                </span>
+              </div>
+            </div>
+            <ChevronDown size={16} className="caret-icon" />
           </button>
           {printerMenu}
-        </div>
-      </div>
 
-      {selectedPrinter && (
-        <div className={`printer-status-inline ${selectedPrinter.state}`}>
-          <span className="status-pill">{describePrinterState(selectedPrinter)}</span>
-          <span className="status-meta">
-            彩色{describeCapabilitySupport(selectedPrinter.color.support)}
-            <span className="status-dot-sep" aria-hidden>
-              ·
+          <div className="printer-caps">
+            <span
+              className={`cap-pill ${availability.colorEnabled ? 'supported' : 'unsupported'}`}
+            >
+              {availability.colorEnabled ? '✓' : '✕'} 彩色打印
             </span>
-            双面{describeCapabilitySupport(selectedPrinter.duplex.support)}
-            {selectedPrinter.portName ? (
-              <>
-                <span className="status-dot-sep" aria-hidden>
-                  ·
-                </span>
-                {selectedPrinter.portName}
-              </>
-            ) : null}
-          </span>
-        </div>
-      )}
-
-      <div className="settings-controls">
-        <div className="setting-row">
-          <span className="setting-row-label" id="color-mode-label">
-            颜色
-          </span>
-          <Segmented
-            className="setting-segmented"
-            size="small"
-            block
-            aria-labelledby="color-mode-label"
-            value={settings.colorMode}
-            options={[
-              { label: '黑白', value: 'monochrome' },
-              {
-                label: '彩色',
-                value: 'color',
-                disabled: !availability.colorEnabled,
-              },
-            ]}
-            onChange={(value) =>
-              onChange({ ...settings, colorMode: value as ColorMode })
-            }
-          />
-        </div>
-        {showColorHint && (
-          <Typography.Text type="secondary" className="field-hint field-hint-inline">
-            彩色不可用：{selectedPrinter?.color.detail ?? '打印机不支持或能力未知'}
-          </Typography.Text>
-        )}
-
-        <div className="setting-row">
-          <span className="setting-row-label" id="sides-mode-label">
-            单双面
-          </span>
-          <Segmented
-            className="setting-segmented"
-            size="small"
-            block
-            aria-labelledby="sides-mode-label"
-            value={settings.sidesMode}
-            options={[
-              { label: '单面', value: 'simplex' },
-              {
-                label: '双面',
-                value: 'duplex',
-                disabled: !availability.duplexEnabled,
-              },
-            ]}
-            onChange={(value) => {
-              const sidesMode = value as SidesMode;
-              onChange({
-                ...settings,
-                sidesMode,
-              });
-            }}
-          />
-        </div>
-
-        {showFlipOptions && (
-          <div className="setting-row setting-row-nested">
-            <span className="setting-row-label" id="flip-mode-label">
-              翻转
+            <span
+              className={`cap-pill ${availability.duplexEnabled ? 'supported' : 'unsupported'}`}
+            >
+              {availability.duplexEnabled ? '✓' : '✕'} 双面翻转
             </span>
-            <Segmented
-              className="setting-segmented"
-              size="small"
-              block
-              aria-labelledby="flip-mode-label"
-              value={settings.flipMode}
-              options={[
-                { label: '长边', value: 'longEdge' },
-                { label: '短边', value: 'shortEdge' },
-              ]}
-              onChange={(value) =>
-                onChange({ ...settings, flipMode: value as FlipMode })
-              }
-            />
-          </div>
-        )}
-        {showDuplexHint && (
-          <Typography.Text type="secondary" className="field-hint field-hint-inline">
-            双面不可用：{selectedPrinter?.duplex.detail ?? '打印机不支持或能力未知'}
-          </Typography.Text>
-        )}
-
-        <div className="setting-row setting-row-copies">
-          <label className="setting-row-label" htmlFor="copies-input">
-            份数
-          </label>
-          <div className="copies-control">
-            <InputNumber
-              id="copies-input"
-              size="small"
-              min={1}
-              max={99}
-              value={settings.copies}
-              onChange={(value) =>
-                onChange({
-                  ...settings,
-                  copies: typeof value === 'number' && value > 0 ? value : 1,
-                })
-              }
-            />
-            <Typography.Text type="secondary">份</Typography.Text>
+            <span className="cap-pill supported">✓ A4 / A3 纸盒</span>
           </div>
         </div>
+
+        {criticalReasons.length > 0 && (
+          <div className="alert-banner">
+            <span className="alert-icon">⚠️</span>
+            <span>{criticalReasons.join('；')}</span>
+          </div>
+        )}
       </div>
 
-      {criticalReasons.length > 0 && (
-        <Alert
-          className="settings-alert"
-          type="warning"
-          showIcon
-          banner
-          message={criticalReasons.join('；')}
-        />
-      )}
-    </div>
+      {/* 03 / 公共设置 */}
+      <div className="rail-section">
+        <div className="section-header">
+          <span className="section-title">
+            <Sliders size={14} /> 03 / 公共设置
+          </span>
+          <span className="section-badge">默认继承</span>
+        </div>
+
+        <div className="setting-group-card">
+          {/* 色彩模式 */}
+          <div className="setting-item">
+            <div className="setting-label-row">
+              <span>色彩模式</span>
+              <span className="setting-sub-hint">
+                {settings.colorMode === 'monochrome' ? '黑白 (节约耗材)' : '全彩色高保真'}
+              </span>
+            </div>
+            <div className="setting-segmented">
+              <button
+                type="button"
+                className={`seg-btn ${settings.colorMode === 'monochrome' ? 'active' : ''}`}
+                onClick={() => onChange({ ...settings, colorMode: 'monochrome' })}
+              >
+                ⚫ 黑白
+              </button>
+              <button
+                type="button"
+                className={`seg-btn ${settings.colorMode === 'color' ? 'active' : ''}`}
+                disabled={!availability.colorEnabled}
+                onClick={() => onChange({ ...settings, colorMode: 'color' })}
+              >
+                🎨 彩色
+              </button>
+            </div>
+            {showColorHint && (
+              <span className="field-hint">
+                当前打印机不支持彩色
+              </span>
+            )}
+          </div>
+
+          {/* 单双面与翻转 */}
+          <div className="setting-item">
+            <div className="setting-label-row">
+              <span>单双面与装订</span>
+              <span className="setting-sub-hint">
+                {settings.sidesMode === 'simplex'
+                  ? '单面打印'
+                  : settings.flipMode === 'longEdge'
+                    ? '双面 (翻转长边)'
+                    : '双面 (翻转短边)'}
+              </span>
+            </div>
+            <div className="setting-segmented three-cols">
+              <button
+                type="button"
+                className={`seg-btn ${settings.sidesMode === 'simplex' ? 'active' : ''}`}
+                onClick={() => onChange({ ...settings, sidesMode: 'simplex' })}
+              >
+                单面
+              </button>
+              <button
+                type="button"
+                className={`seg-btn ${
+                  settings.sidesMode === 'duplex' && settings.flipMode === 'longEdge'
+                    ? 'active'
+                    : ''
+                }`}
+                disabled={!availability.duplexEnabled}
+                onClick={() =>
+                  onChange({
+                    ...settings,
+                    sidesMode: 'duplex',
+                    flipMode: 'longEdge',
+                  })
+                }
+              >
+                双面长边
+              </button>
+              <button
+                type="button"
+                className={`seg-btn ${
+                  settings.sidesMode === 'duplex' && settings.flipMode === 'shortEdge'
+                    ? 'active'
+                    : ''
+                }`}
+                disabled={!availability.duplexEnabled}
+                onClick={() =>
+                  onChange({
+                    ...settings,
+                    sidesMode: 'duplex',
+                    flipMode: 'shortEdge',
+                  })
+                }
+              >
+                双面短边
+              </button>
+            </div>
+            {showDuplexHint && (
+              <span className="field-hint">
+                当前打印机不支持硬件双面
+              </span>
+            )}
+          </div>
+
+          {/* 打印份数 */}
+          <div className="setting-item">
+            <div className="setting-label-row">
+              <span>打印份数</span>
+              <span className="setting-sub-hint">整批重复份数</span>
+            </div>
+            <div className="stepper-input">
+              <button
+                type="button"
+                className="stepper-btn"
+                onClick={() =>
+                  onChange({
+                    ...settings,
+                    copies: Math.max(1, settings.copies - 1),
+                  })
+                }
+              >
+                -
+              </button>
+              <div className="stepper-val">{settings.copies} 份</div>
+              <button
+                type="button"
+                className="stepper-btn"
+                onClick={() =>
+                  onChange({
+                    ...settings,
+                    copies: Math.min(99, settings.copies + 1),
+                  })
+                }
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
