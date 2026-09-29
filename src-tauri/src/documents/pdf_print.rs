@@ -212,7 +212,6 @@ fn render_single_page(
 
 #[cfg(test)]
 fn destination_pixels_for_page(width_dip: f32, height_dip: f32, target_dpi: u32) -> (u32, u32) {
-
     destination_pixels_for_page_size(
         Size {
             Width: width_dip,
