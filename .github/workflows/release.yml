@@ -1,34 +1,268 @@
 name: Release
 
+# 出包全流程都在这里：推 v* tag，或在 Actions 页面手动 Run workflow 填版本号。
+# 版本号只在 tag / 手动输入里出现一次，工作流先把它「同步」进下面这几个文件再构建，
+# 所以不会出现「tag 是 v1.0.10、安装包却叫 1.0.9」这类错位，本地也不用再手动改版本：
+#   package.json                    —— 前端 __APP_VERSION__（rsbuild define 注入）
+#   package-lock.json               —— 与 package.json 保持一致
+#   src-tauri/tauri.conf.json       —— 安装包 / 应用版本号
+#   src-tauri/Cargo.toml            —— CARGO_PKG_VERSION，应用内“检查更新”就是拿它比对
+#   src-tauri/Cargo.lock            —— 本地 crate 条目
+# 注意：setup-node / rust-cache 刻意排在同步之前，这样缓存 key 依赖的是仓库里已提交的
+# lock 文件，跨版本保持稳定，不会每次发版都冷编译一遍 Rust。
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本号，例如 1.0.10（不用写 v；带 -rc.1 会标成预发布）'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+# 发布串行执行：两个 Windows 构建同时往同一个 Release 写产物会互相踩
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   windows-release:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version from tag / input
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_VERSION } else { $env:REF_NAME }
+          if ([string]::IsNullOrWhiteSpace($raw)) {
+            throw 'No version available: neither a pushed tag nor a workflow_dispatch input.'
+          }
+          $version = $raw.Trim().TrimStart('v', 'V')
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+            throw "Invalid version '$raw': expected something like 1.0.10 or v1.0.10 (optional suffix like -rc.1)."
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version" -Encoding utf8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=v$version" -Encoding utf8
+          Write-Host "Release version: $version"
+
+      - name: Ensure tag exists (manual run only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TARGET_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch --tags --force
+          if (git tag --list $env:TARGET_TAG) {
+            Write-Host "Tag $env:TARGET_TAG already exists, reusing it."
+          } else {
+            git tag $env:TARGET_TAG
+            git push origin $env:TARGET_TAG
+            if ($LASTEXITCODE -ne 0) { throw "Failed to push tag $env:TARGET_TAG." }
+            # 用 GITHUB_TOKEN 推的 tag 不会再触发一次本工作流，不会打成死循环
+            Write-Host "Created and pushed tag $env:TARGET_TAG."
+          }
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Sync version into all manifests
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TARGET_VERSION
+
+          # 只改第 1 个匹配，避免误伤同文件里的依赖版本号
+          function Set-FirstVersion {
+            param([string]$Path, [string]$Pattern)
+            $text = Get-Content -Path $Path -Raw
+            $match = [regex]::Match($text, $Pattern)
+            if (-not $match.Success) { throw "$Path : no version field matched $Pattern" }
+            $old = $match.Groups[2].Value
+            if ($old -eq $version) {
+              Write-Host ("  {0,-28} already {1}" -f $Path, $version)
+              return
+            }
+            $new = $text.Substring(0, $match.Index) +
+                   $match.Groups[1].Value + $version + $match.Groups[3].Value +
+                   $text.Substring($match.Index + $match.Length)
+            Set-Content -Path $Path -Value $new -NoNewline
+            Write-Host ("  {0,-28} {1} -> {2}" -f $Path, $old, $version)
+          }
+
+          # 改所有匹配（本包自身的条目，name 与 version 相邻，可以精确锚定）
+          function Set-EveryVersion {
+            param([string]$Path, [string]$Pattern, [int]$Expected)
+            $text = Get-Content -Path $Path -Raw
+            $hits = [regex]::Matches($text, $Pattern)
+            if ($hits.Count -ne $Expected) {
+              throw "$Path : expected $Expected own-package entries, found $($hits.Count)"
+            }
+            $stale = @($hits | Where-Object { $_.Groups[2].Value -ne $version })
+            if ($stale.Count -eq 0) {
+              Write-Host ("  {0,-28} already {1} ({2} entries)" -f $Path, $version, $hits.Count)
+              return
+            }
+            $new = [regex]::Replace($text, $Pattern, ('${1}' + $version + '${3}'))
+            Set-Content -Path $Path -Value $new -NoNewline
+            Write-Host ("  {0,-28} {1} -> {2} ({3} entries)" -f $Path,
+                        (($stale | ForEach-Object { $_.Groups[2].Value } | Sort-Object -Unique) -join ', '),
+                        $version, $hits.Count)
+          }
+
+          # 顶层唯一的 "version" 键
+          Set-FirstVersion 'package.json'              '(?m)^(\s*"version":\s*")([^"]+)(")'
+          Set-FirstVersion 'src-tauri/tauri.conf.json' '(?m)^(\s*"version":\s*")([^"]+)(")'
+          # 根条目 + packages."" 根条目；依赖条目的 version 必须原样保留
+          Set-EveryVersion 'package-lock.json'         '("name":\s*"print-assist",\s*"version":\s*")([^"]+)(")' 2
+          # [package] 段的 version
+          Set-FirstVersion 'src-tauri/Cargo.toml'      '(?ms)^(\[package\].*?^version = ")([^"]+)(")'
+          Set-EveryVersion 'src-tauri/Cargo.lock'      '(\[\[package\]\]\r?\nname = "print-assist"\r?\nversion = ")([^"]+)(")' 1
+
+      - name: Verify all manifests agree
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TARGET_VERSION
+          $checks = [ordered]@{
+            'package.json'              = '(?m)^\s*"version":\s*"([^"]+)"'
+            'package-lock.json'         = '"name":\s*"print-assist",\s*"version":\s*"([^"]+)"'
+            'src-tauri/tauri.conf.json' = '(?m)^\s*"version":\s*"([^"]+)"'
+            'src-tauri/Cargo.toml'      = '(?ms)^\[package\].*?^version = "([^"]+)"'
+            'src-tauri/Cargo.lock'      = '(?m)^name = "print-assist"\r?\nversion = "([^"]+)"'
+          }
+          $bad = @()
+          foreach ($file in $checks.Keys) {
+            $found = @([regex]::Matches((Get-Content -Path $file -Raw), $checks[$file]) |
+                       ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+            $ok = ($found.Count -eq 1 -and $found[0] -eq $version)
+            if (-not $ok) { $bad += $file }
+            Write-Host ("  [{0}] {1} -> {2}" -f $(if ($ok) { 'OK' } else { 'FAIL' }), $file, ($found -join ', '))
+          }
+          if ($bad.Count -gt 0) {
+            throw "Version mismatch in: $($bad -join ', ') (expected $version)"
+          }
+          Write-Host "All manifests are at $version"
+
       - name: Install frontend dependencies
         run: npm ci
-      - name: Build frontend
-        run: npm run build
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Test frontend
+        run: npm test
+
+      # tauri build 会通过 tauri.conf.json 的 beforeBuildCommand 跑 npm run build，
+      # 再把 dist/ 打进安装包，所以这里不需要单独 build 前端
       - name: Build Windows installer
         run: npm run tauri:build
+
+      - name: Collect installer checksums
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TARGET_VERSION
+          $bundleDir = 'src-tauri/target/release/bundle/nsis'
+          $installers = @(Get-ChildItem -Path $bundleDir -Filter '*.exe' -File -ErrorAction SilentlyContinue)
+          if ($installers.Count -eq 0) {
+            throw "No NSIS installer found under $bundleDir - the tauri build step did not produce one."
+          }
+          $rows = foreach ($file in $installers) {
+            [pscustomobject]@{
+              Name = $file.Name
+              Hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          $rows | ForEach-Object { "{0}  {1}" -f $_.Hash, $_.Name } |
+            Set-Content -Path 'SHA256SUMS.txt' -Encoding utf8
+
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## PrintAssist $version" -Encoding utf8
+          foreach ($row in $rows) {
+            Write-Host ("  {0}  {1}" -f $row.Hash, $row.Name)
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY `
+              -Value ("- ``{0}`` -- sha256 ``{1}``" -f $row.Name, $row.Hash) -Encoding utf8
+          }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrintAssist-${{ steps.version.outputs.version }}-nsis
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: PrintAssist ${{ steps.version.outputs.version }}
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt
           generate_release_notes: true
+          fail_on_unmatched_files: true
+          # 带 -rc.1 这类后缀的按预发布处理：不会占用 “Latest”，
+          # 因此应用内“检查更新”读到的仍是最新稳定版
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          make_latest: ${{ !contains(steps.version.outputs.version, '-') }}
+
+      # 可选：把同步后的版本号回写到默认分支，让仓库里的文件始终等于最新已发布版本。
+      # 默认关闭；要开启就在仓库 Settings → Secrets and variables → Actions → Variables
+      # 新建变量 RELEASE_COMMIT_BACK = true。
+      # 开启的代价：每次发版 Cargo.lock 的哈希都会变，rust-cache 缓存 key 随之失效，
+      # 每次发布都要冷编译一次 Rust。
+      - name: Commit synced version back (optional)
+        if: vars.RELEASE_COMMIT_BACK == 'true'
+        continue-on-error: true
+        env:
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'Manifests already up to date, nothing to commit.'
+            exit 0
+          }
+          git commit -m "chore(release): bump version to $env:TARGET_VERSION"
+          git push origin "HEAD:$env:DEFAULT_BRANCH"
+          if ($LASTEXITCODE -ne 0) {
+            throw "$env:DEFAULT_BRANCH is ahead of the tagged commit (or protected); commit the version bump manually."
+          }

@@ -36,6 +36,28 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri:build
 ```
 
+## 发布
+
+出包全过程由 GitHub Actions 完成（`.github/workflows/release.yml`），版本号只需要给一次：
+
+```bash
+# 推 tag 即触发发布，tag 就是版本号（推荐）
+git tag v1.0.10
+git push origin v1.0.10
+```
+
+也可以在仓库 Actions 页面选 `Release` → `Run workflow` 填 `1.0.10` 手动触发，工作流会自动创建并推送 `v1.0.10` tag。
+
+工作流依次完成：把版本号同步进 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、
+`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` → 校验五个文件版本一致 → lint / test → 构建 NSIS 安装包
+→ 生成 `SHA256SUMS.txt` → 发布 GitHub Release（自动 release notes）。安装包同时作为 Actions artifact 保留 30 天。
+所以**本地不需要先改版本号，也没有额外的 bump 脚本**。
+
+- 带 `-` 的版本（如 `v1.1.0-rc.1`）会发布为预发布，不占用 “Latest”，因此应用内“检查更新”读到的仍是最新稳定版。
+- 仓库里的版本号默认不随发布回写；要让 bot 把同步后的版本号提交回默认分支，
+  在 Settings → Secrets and variables → Actions → Variables 里加 `RELEASE_COMMIT_BACK = true`（代价见 workflow 注释）。
+- 安装包目前未做代码签名，首次运行会出现 SmartScreen 提示。
+
 ## 支持格式
 
 | 类型 | 扩展名 | 说明 |
