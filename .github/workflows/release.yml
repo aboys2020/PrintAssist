@@ -1,6 +1,7 @@
 name: Release
 
-# 出包全流程都在这里：推 v* tag，或在 Actions 页面手动 Run workflow 填版本号。
+# 出包全流程都在这里：推 v* tag，或在 Actions 页面手动 Run workflow
+# （手动触发默认在最新已发布版本上 +1 patch，也可显式填版本号）。
 # 版本号只在 tag / 手动输入里出现一次，工作流先把它「同步」进下面这几个文件再构建，
 # 所以不会出现「tag 是 v1.0.10、安装包却叫 1.0.9」这类错位，本地也不用再手动改版本：
 #   package.json                    —— 前端 __APP_VERSION__（rsbuild define 注入）
@@ -17,9 +18,17 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      bump:
+        description: '版本递增方式（version 留空时生效）'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
       version:
-        description: '要发布的版本号，例如 1.0.10（不用写 v；带 -rc.1 会标成预发布）'
-        required: true
+        description: '可选：显式指定版本号（如 1.0.10，带 -rc.1 标为预发布）；留空则按上面的递增方式自动算'
+        required: false
         type: string
 
 permissions:
@@ -43,25 +52,86 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve version from tag / input
+      - name: Resolve version
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ALLOW_DOWNGRADE: ${{ vars.ALLOW_VERSION_DOWNGRADE }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $raw = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_VERSION } else { $env:REF_NAME }
-          if ([string]::IsNullOrWhiteSpace($raw)) {
-            throw 'No version available: neither a pushed tag nor a workflow_dispatch input.'
+
+          # 1 / 1.0 / v1.0 / 1.0.10 / 1.0.10-rc.1 都能解析，缺的位补 0
+          function ConvertTo-Version([string]$Text) {
+            if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+            $t = $Text.Trim().TrimStart('v', 'V')
+            if ($t -notmatch '^(\d+)(?:\.(\d+))?(?:\.(\d+))?(-[0-9A-Za-z.-]+)?$') { return $null }
+            $major = [int]$Matches[1]
+            $minor = if ($Matches[2]) { [int]$Matches[2] } else { 0 }
+            $patch = if ($Matches[3]) { [int]$Matches[3] } else { 0 }
+            $pre = [string]$Matches[4]
+            [pscustomobject]@{
+              Major = $major
+              Minor = $minor
+              Patch = $patch
+              Pre   = $pre
+              Text  = "$major.$minor.$patch$pre"
+            }
           }
-          $version = $raw.Trim().TrimStart('v', 'V')
-          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
-            throw "Invalid version '$raw': expected something like 1.0.10 or v1.0.10 (optional suffix like -rc.1)."
+          function Get-Rank($Version) { $Version.Major * 1000000 + $Version.Minor * 1000 + $Version.Patch }
+
+          # 基线 = 三者中最高的：仓库版本 / 已有 v* tag / 最新已发布 Release
+          $baseline = ConvertTo-Version (Get-Content -Path 'package.json' -Raw | ConvertFrom-Json).version
+          foreach ($tag in @(git tag --list 'v*')) {
+            $candidate = ConvertTo-Version $tag
+            if ($candidate -and (Get-Rank $candidate) -gt (Get-Rank $baseline)) { $baseline = $candidate }
           }
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version" -Encoding utf8
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=v$version" -Encoding utf8
-          Write-Host "Release version: $version"
+          try {
+            $headers = @{ 'User-Agent' = 'PrintAssist-Release' }
+            if ($env:GH_TOKEN) { $headers['Authorization'] = "Bearer $($env:GH_TOKEN)" }
+            $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$($env:GH_REPO)/releases/latest" `
+              -Headers $headers -TimeoutSec 20
+            $candidate = ConvertTo-Version $latest.tag_name
+            if ($candidate -and (Get-Rank $candidate) -gt (Get-Rank $baseline)) { $baseline = $candidate }
+            Write-Host "Latest published release: $($latest.tag_name)"
+          } catch {
+            Write-Host "Latest release API unavailable ($($_.Exception.Message)); using git tags / package.json."
+          }
+          Write-Host "Version baseline: $($baseline.Text)"
+
+          # 目标版本：推 tag 时以 tag 为准；手动触发时按 bump 自动算，或显式指定 version
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            if (-not [string]::IsNullOrWhiteSpace($env:INPUT_VERSION)) {
+              $target = ConvertTo-Version $env:INPUT_VERSION
+              if (-not $target) {
+                throw "无法识别的版本号 '$($env:INPUT_VERSION)'：可填 1.0.10 / v1.0.10 / 1.0.10-rc.1（当前基线 $($baseline.Text)）。"
+              }
+            } else {
+              $bump = if ([string]::IsNullOrWhiteSpace($env:INPUT_BUMP)) { 'patch' } else { $env:INPUT_BUMP }
+              switch ($bump) {
+                'major' { $target = ConvertTo-Version "$($baseline.Major + 1).0.0" }
+                'minor' { $target = ConvertTo-Version "$($baseline.Major).$($baseline.Minor + 1).0" }
+                default { $target = ConvertTo-Version "$($baseline.Major).$($baseline.Minor).$($baseline.Patch + 1)" }
+              }
+              Write-Host "Bump '$bump': $($baseline.Text) -> $($target.Text)"
+            }
+          } else {
+            $target = ConvertTo-Version $env:REF_NAME
+            if (-not $target) { throw "无法从 tag '$($env:REF_NAME)' 解析版本号：期望形如 v1.0.10。" }
+          }
+
+          # 防降级：应用内“检查更新”只做字符串比较，发布低版本会把旧版本当成更新推给用户
+          if (-not $target.Pre -and (Get-Rank $target) -lt (Get-Rank $baseline) -and $env:ALLOW_DOWNGRADE -ne 'true') {
+            throw "拒绝发布 $($target.Text)：它低于当前基线 $($baseline.Text)。确实要发低版本时，在 Settings → Secrets and variables → Actions → Variables 里加 ALLOW_VERSION_DOWNGRADE=true。"
+          }
+
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$($target.Text)" -Encoding utf8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=v$($target.Text)" -Encoding utf8
+          Write-Host "Release version: $($target.Text)"
 
       - name: Ensure tag exists (manual run only)
         if: github.event_name == 'workflow_dispatch'
