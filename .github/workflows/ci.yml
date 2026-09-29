@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# 同一分支连续推送时取消上一次还在跑的 CI，省 runner 时间
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     # Version bumps are verified by the tag-triggered Release workflow
@@ -35,3 +40,81 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - name: Rust test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # 推到 main 时额外产出一个可直接下载的安装包：
+  # 运行页 → 下方 Artifacts → PrintAssist-<版本>-<短SHA>。
+  # 这里的版本号取自仓库里的 package.json（开发包，安装包文件名仍是该版本），
+  # 所以同一个 1.0.9 会有多个按 commit SHA 区分的 Artifact。
+  # 正式发版（发到 Releases、影响应用内“检查更新”）仍然只走 release.yml：
+  # 推 v* tag，或手动 Run workflow。PR 不打包。
+  build-app:
+    needs: windows
+    if: >
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Read app version
+        id: version
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content -Path 'package.json' -Raw | ConvertFrom-Json).version
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version" -Encoding utf8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$sha" -Encoding utf8
+          Write-Host "Dev build: $version @ $sha"
+      - name: Build Windows installer
+        run: npm run tauri:build
+      - name: Checksums and summary
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundleDir = 'src-tauri/target/release/bundle/nsis'
+          $installers = @(Get-ChildItem -Path $bundleDir -Filter '*.exe' -File -ErrorAction SilentlyContinue)
+          if ($installers.Count -eq 0) {
+            throw "No NSIS installer found under $bundleDir - the tauri build step did not produce one."
+          }
+          $rows = foreach ($file in $installers) {
+            [pscustomobject]@{
+              Name = $file.Name
+              Hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          $rows | ForEach-Object { "{0}  {1}" -f $_.Hash, $_.Name } |
+            Set-Content -Path 'SHA256SUMS.txt' -Encoding utf8
+
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY `
+            -Value "## PrintAssist $env:APP_VERSION (dev build @ $env:SHORT_SHA)" -Encoding utf8
+          foreach ($row in $rows) {
+            Write-Host ("  {0}  {1}" -f $row.Hash, $row.Name)
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY `
+              -Value ("- ``{0}`` -- sha256 ``{1}``" -f $row.Name, $row.Hash) -Encoding utf8
+          }
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrintAssist-${{ steps.version.outputs.version }}-${{ steps.version.outputs.sha }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
